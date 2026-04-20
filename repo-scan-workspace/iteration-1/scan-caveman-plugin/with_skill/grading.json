@@ -1,0 +1,33 @@
+{
+  "eval_id": 1,
+  "eval_name": "scan-caveman-plugin",
+  "configuration": "with_skill",
+  "pass_rate": 1.0,
+  "expectations": [
+    {
+      "text": "Output contains a scan header referencing the target",
+      "passed": true,
+      "evidence": "Line 1: '## Repo scan: /Users/LUP1BG/.claude/plugins/cache/caveman/caveman/63e797cd753b'"
+    },
+    {
+      "text": "Output includes a Structure section",
+      "passed": true,
+      "evidence": "'### Structure' present with annotated tree"
+    },
+    {
+      "text": "Output detects shell scripts as primary content type",
+      "passed": true,
+      "evidence": "Stack mentions 'JavaScript (Node.js hooks)'; structure lists 'caveman-statusline.sh' and hook JS files; deps note identifies no hardcoded secrets in api_key env reads"
+    },
+    {
+      "text": "Output mentions SKILL.md as a key file",
+      "passed": true,
+      "evidence": "Line: 'caveman/SKILL.md # Core caveman communication-mode skill' in structure tree"
+    },
+    {
+      "text": "Output includes a Summary section",
+      "passed": true,
+      "evidence": "'### Summary' present with 3-sentence description"
+    }
+  ]
+}

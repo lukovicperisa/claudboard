@@ -1,0 +1,185 @@
+{
+  "metadata": {
+    "skill_name": "repo-scan",
+    "skill_path": "/Users/LUP1BG/Documents/BoschProjects/claude-repo-scan/skills/repo-scan",
+    "executor_model": "claude-sonnet-4-6",
+    "analyzer_model": "claude-sonnet-4-6",
+    "timestamp": "2026-04-15T13:00:00Z",
+    "evals_run": [0, 1, 2],
+    "runs_per_configuration": 1
+  },
+  "runs": [
+    {
+      "eval_id": 0,
+      "eval_name": "scan-current-project",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 6,
+        "failed": 0,
+        "total": 6,
+        "time_seconds": 57.7,
+        "tokens": 16890,
+        "tool_calls": 16,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "Output contains '## Repo scan' header with the target path", "passed": true, "evidence": "Line 1: '## Repo scan: /Users/LUP1BG/Documents/BoschProjects/claude-repo-scan'"},
+        {"text": "Output includes a Stack section", "passed": true, "evidence": "Line 3: '**Stack:** Markdown · JSON · Claude Code skill/plugin project...'"},
+        {"text": "Output includes a Structure section", "passed": true, "evidence": "Line 6: '### Structure'"},
+        {"text": "Output includes a Summary section", "passed": true, "evidence": "Line 26: '### Summary'"},
+        {"text": "Output flags missing tests", "passed": true, "evidence": "[WARN] No tests — no test/, tests/, spec/, or *.test.* files found"},
+        {"text": "Output flags missing CI config", "passed": true, "evidence": "[WARN] No CI — no .github/workflows/, .gitlab-ci.yml..."}
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 0,
+      "eval_name": "scan-current-project",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 6,
+        "failed": 0,
+        "total": 6,
+        "time_seconds": 82.6,
+        "tokens": 18945,
+        "tool_calls": 16,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "Output contains '## Repo scan' header with the target path", "passed": true, "evidence": "Baseline coincidentally used identical format: '## Repo scan: /Users/LUP1BG/...'"},
+        {"text": "Output includes a Stack section", "passed": true, "evidence": "'**Stack:** Markdown · JSON · Claude Code skill/plugin framework...'"},
+        {"text": "Output includes a Structure section", "passed": true, "evidence": "'### Structure' present"},
+        {"text": "Output includes a Summary section", "passed": true, "evidence": "'### Summary' present"},
+        {"text": "Output flags missing tests", "passed": true, "evidence": "[WARN] No tests..."},
+        {"text": "Output flags missing CI config", "passed": true, "evidence": "[WARN] No CI config..."}
+      ],
+      "notes": ["Baseline output matched skill template exactly — this eval does not discriminate skill value. Simple repo with obvious structure likely caused natural alignment."]
+    },
+    {
+      "eval_id": 1,
+      "eval_name": "scan-caveman-plugin",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 96.2,
+        "tokens": 21762,
+        "tool_calls": 24,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "Output contains a scan header referencing the target", "passed": true, "evidence": "'## Repo scan: /Users/LUP1BG/.claude/plugins/cache/caveman/caveman/63e797cd753b'"},
+        {"text": "Output includes a Structure section", "passed": true, "evidence": "'### Structure' with annotated tree"},
+        {"text": "Output detects shell scripts as primary content type", "passed": true, "evidence": "Stack: 'JavaScript (Node.js hooks) · Python'; structure lists caveman-statusline.sh and hook JS files"},
+        {"text": "Output mentions SKILL.md as a key file", "passed": true, "evidence": "'caveman/SKILL.md # Core caveman communication-mode skill'"},
+        {"text": "Output includes a Summary section", "passed": true, "evidence": "'### Summary' with 3-sentence description"}
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "eval_name": "scan-caveman-plugin",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.6,
+        "passed": 3,
+        "failed": 2,
+        "total": 5,
+        "time_seconds": 133.3,
+        "tokens": 48119,
+        "tool_calls": 23,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "Output contains a scan header referencing the target", "passed": true, "evidence": "'# Repository Scan: caveman' — identifies what was scanned"},
+        {"text": "Output includes a Structure section", "passed": false, "evidence": "Uses '## Directory Structure and Key Files' (h2) not '### Structure' (h3)"},
+        {"text": "Output detects shell scripts as primary content type", "passed": true, "evidence": "Mentions hooks/*.sh; table row 'Claude Code hooks | JavaScript (Node.js, no npm dependencies)'"},
+        {"text": "Output mentions SKILL.md as a key file", "passed": true, "evidence": "Multiple SKILL.md references in directory tree"},
+        {"text": "Output includes a Summary section", "passed": false, "evidence": "Has '## Summary' (h2) not '### Summary' (h3); heading level mismatch"}
+      ],
+      "notes": ["Baseline produced a much more verbose report (195 lines vs 35 lines) — not terse as required. Took 37 seconds longer and used 2.2x more tokens."]
+    },
+    {
+      "eval_id": 2,
+      "eval_name": "scan-skill-creator",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 6,
+        "failed": 0,
+        "total": 6,
+        "time_seconds": 81.2,
+        "tokens": 19820,
+        "tool_calls": 19,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "Output contains '## Repo scan' header", "passed": true, "evidence": "'## Repo scan: /Users/LUP1BG/.claude/plugins/cache/claude-plugins-official/skill-creator/unknown'"},
+        {"text": "Output detects Python as primary language", "passed": true, "evidence": "'**Stack:** Python · Claude Code Plugin (skill) · no build tool'"},
+        {"text": "Output includes a Structure section", "passed": true, "evidence": "'### Structure' with annotated tree"},
+        {"text": "Output mentions SKILL.md as entry point", "passed": true, "evidence": "'SKILL.md — main skill definition (~32 KB, ~500 lines)'"},
+        {"text": "Output includes a Summary with meaningful description", "passed": true, "evidence": "Summary describes skill-creator's full workflow purpose accurately"},
+        {"text": "Output includes Stack line", "passed": true, "evidence": "'**Stack:** Python · Claude Code Plugin (skill) · no build tool'"}
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "eval_name": "scan-skill-creator",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.5,
+        "passed": 3,
+        "failed": 3,
+        "total": 6,
+        "time_seconds": 126.2,
+        "tokens": 66642,
+        "tool_calls": 23,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "Output contains '## Repo scan' header", "passed": false, "evidence": "Uses '# Repository Scan Report' (h1, different label)"},
+        {"text": "Output detects Python as primary language", "passed": true, "evidence": "Table row: 'Primary language | Python 3 (standard library + anthropic SDK)'"},
+        {"text": "Output includes a Structure section", "passed": false, "evidence": "Uses '## Directory Structure' (h2) not '### Structure' (h3)"},
+        {"text": "Output mentions SKILL.md as entry point", "passed": true, "evidence": "Multiple references: 'SKILL.md # Main skill instructions + YAML frontmatter (480 lines)'"},
+        {"text": "Output includes a Summary with meaningful description", "passed": true, "evidence": "'## Summary' section accurately describes skill-creator"},
+        {"text": "Output includes Stack line", "passed": false, "evidence": "Uses a markdown table instead of '**Stack:** ...' single-line format"}
+      ],
+      "notes": ["Baseline used 163-line report vs 33-line with-skill report. Extremely verbose — 3.4x more tokens. Template not followed."]
+    }
+  ],
+  "run_summary": {
+    "with_skill": {
+      "pass_rate": {"mean": 1.0, "stddev": 0.0, "min": 1.0, "max": 1.0},
+      "time_seconds": {"mean": 78.4, "stddev": 19.4, "min": 57.7, "max": 96.2},
+      "tokens": {"mean": 19491, "stddev": 2453, "min": 16890, "max": 21762}
+    },
+    "without_skill": {
+      "pass_rate": {"mean": 0.7, "stddev": 0.26, "min": 0.5, "max": 1.0},
+      "time_seconds": {"mean": 114.0, "stddev": 27.5, "min": 82.6, "max": 133.3},
+      "tokens": {"mean": 44569, "stddev": 24046, "min": 18945, "max": 66642}
+    },
+    "delta": {
+      "pass_rate": "+0.30",
+      "time_seconds": "-35.6",
+      "tokens": "-25078"
+    }
+  },
+  "notes": [
+    "Eval 0 (scan-current-project) is non-discriminating: baseline coincidentally matched the skill template. This repo is simple/shallow — natural output resembled the template. Drop or replace this eval.",
+    "Evals 1 and 2 clearly show skill value: baseline produced verbose reports (195 and 163 lines) vs terse skill output (35 and 33 lines).",
+    "With-skill uses 2.3x fewer tokens on average (19491 vs 44569) — the template constrains verbosity effectively.",
+    "With-skill is 35.6s faster on average — structured instructions reduce agent deliberation time.",
+    "Key skill win: consistent heading hierarchy (### not ##) and **Stack:** inline format. Baseline drifts to tables and different heading levels on complex repos."
+  ]
+}

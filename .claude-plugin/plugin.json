@@ -1,0 +1,8 @@
+{
+  "name": "claudboard",
+  "description": "Deep-analyzes brownfield projects and generates production-ready Claude Code onboarding artifacts: CLAUDE.md, rules, and full-scope skills tailored to the project's actual patterns.",
+  "author": {
+    "name": "LUP1BG"
+  },
+  "version": "2.0.0"
+}

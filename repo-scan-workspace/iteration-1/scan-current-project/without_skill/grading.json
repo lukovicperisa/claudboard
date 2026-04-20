@@ -1,0 +1,38 @@
+{
+  "eval_id": 0,
+  "eval_name": "scan-current-project",
+  "configuration": "without_skill",
+  "pass_rate": 1.0,
+  "expectations": [
+    {
+      "text": "Output contains '## Repo scan' header with the target path",
+      "passed": true,
+      "evidence": "Line 1: '## Repo scan: /Users/LUP1BG/Documents/BoschProjects/claude-repo-scan' — baseline coincidentally followed the same format"
+    },
+    {
+      "text": "Output includes a Stack section",
+      "passed": true,
+      "evidence": "Line 3: '**Stack:** Markdown · JSON · Claude Code skill/plugin framework...'"
+    },
+    {
+      "text": "Output includes a Structure section",
+      "passed": true,
+      "evidence": "Line 6: '### Structure'"
+    },
+    {
+      "text": "Output includes a Summary section",
+      "passed": true,
+      "evidence": "Line near end: '### Summary'"
+    },
+    {
+      "text": "Output flags missing tests",
+      "passed": true,
+      "evidence": "[WARN] No tests — no `test/`, `tests/`, `__tests__/`, `spec/`, `*.test.*`, or `*.spec.*` files found"
+    },
+    {
+      "text": "Output flags missing CI config",
+      "passed": true,
+      "evidence": "[WARN] No CI config — no `.github/workflows/`, `.gitlab-ci.yml`, `Jenkinsfile`, `.circleci/`, or `azure-pipelines.yml` found"
+    }
+  ]
+}

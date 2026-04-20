@@ -1,0 +1,38 @@
+{
+  "eval_id": 2,
+  "eval_name": "scan-skill-creator",
+  "configuration": "with_skill",
+  "pass_rate": 1.0,
+  "expectations": [
+    {
+      "text": "Output contains '## Repo scan' header",
+      "passed": true,
+      "evidence": "Line 1: '## Repo scan: /Users/LUP1BG/.claude/plugins/cache/claude-plugins-official/skill-creator/unknown'"
+    },
+    {
+      "text": "Output detects Python as primary language",
+      "passed": true,
+      "evidence": "Line 3: '**Stack:** Python · Claude Code Plugin (skill) · no build tool'"
+    },
+    {
+      "text": "Output includes a Structure section",
+      "passed": true,
+      "evidence": "'### Structure' present with annotated tree of key files"
+    },
+    {
+      "text": "Output mentions SKILL.md as entry point",
+      "passed": true,
+      "evidence": "Structure tree: 'SKILL.md — main skill definition (~32 KB, ~500 lines)'"
+    },
+    {
+      "text": "Output includes a Summary with meaningful description",
+      "passed": true,
+      "evidence": "Summary: 'This is an official Anthropic Claude Code plugin (\"skill-creator\") that provides Claude with a structured workflow for creating, evaluating, and iteratively improving Claude Code skills.'"
+    },
+    {
+      "text": "Output includes Stack line",
+      "passed": true,
+      "evidence": "'**Stack:** Python · Claude Code Plugin (skill) · no build tool'"
+    }
+  ]
+}

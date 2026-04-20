@@ -1,0 +1,32 @@
+{
+  "eval_id": 1,
+  "eval_name": "scan-caveman-plugin",
+  "prompt": "scan this repo and tell me what's in it: /Users/LUP1BG/.claude/plugins/cache/caveman/caveman/63e797cd753b",
+  "assertions": [
+    {
+      "text": "Output contains a scan header or title referencing the target path",
+      "type": "semantic",
+      "description": "Report has a header that identifies what was scanned (repo scan or similar)"
+    },
+    {
+      "text": "Output includes a Structure section",
+      "type": "string_match",
+      "pattern": "### Structure"
+    },
+    {
+      "text": "Output detects shell scripts as primary content type",
+      "type": "semantic",
+      "description": "Report identifies shell scripts (bash/sh) or hooks as a significant part of the repo"
+    },
+    {
+      "text": "Output mentions SKILL.md as a key file",
+      "type": "semantic",
+      "description": "Report references SKILL.md or skill definition file in the structure"
+    },
+    {
+      "text": "Output includes a Summary section",
+      "type": "string_match",
+      "pattern": "### Summary"
+    }
+  ]
+}

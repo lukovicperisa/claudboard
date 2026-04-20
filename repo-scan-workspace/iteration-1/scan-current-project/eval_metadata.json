@@ -1,0 +1,37 @@
+{
+  "eval_id": 0,
+  "eval_name": "scan-current-project",
+  "prompt": "/repo-scan /Users/LUP1BG/Documents/BoschProjects/claude-repo-scan",
+  "assertions": [
+    {
+      "text": "Output contains '## Repo scan' header with the target path",
+      "type": "string_match",
+      "pattern": "## Repo scan"
+    },
+    {
+      "text": "Output includes a Stack section",
+      "type": "string_match",
+      "pattern": "\\*\\*Stack\\*\\*"
+    },
+    {
+      "text": "Output includes a Structure section",
+      "type": "string_match",
+      "pattern": "### Structure"
+    },
+    {
+      "text": "Output includes a Summary section",
+      "type": "string_match",
+      "pattern": "### Summary"
+    },
+    {
+      "text": "Output flags missing tests (no test dir exists in this project)",
+      "type": "semantic",
+      "description": "Report mentions no tests, missing tests, or absence of test directory"
+    },
+    {
+      "text": "Output flags missing CI config",
+      "type": "semantic",
+      "description": "Report mentions no CI, missing CI, no GitHub Actions, or similar"
+    }
+  ]
+}

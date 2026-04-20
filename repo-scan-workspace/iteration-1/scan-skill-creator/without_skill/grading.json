@@ -1,0 +1,38 @@
+{
+  "eval_id": 2,
+  "eval_name": "scan-skill-creator",
+  "configuration": "without_skill",
+  "pass_rate": 0.5,
+  "expectations": [
+    {
+      "text": "Output contains '## Repo scan' header",
+      "passed": false,
+      "evidence": "Uses '# Repository Scan Report' (h1, different label) not '## Repo scan'"
+    },
+    {
+      "text": "Output detects Python as primary language",
+      "passed": true,
+      "evidence": "Table row: 'Primary language | Python 3 (standard library + anthropic SDK)'"
+    },
+    {
+      "text": "Output includes a Structure section",
+      "passed": false,
+      "evidence": "Uses '## Directory Structure' (h2, different label) not '### Structure' (h3)"
+    },
+    {
+      "text": "Output mentions SKILL.md as entry point",
+      "passed": true,
+      "evidence": "Multiple references: 'SKILL.md # Main skill instructions + YAML frontmatter (480 lines)'"
+    },
+    {
+      "text": "Output includes a Summary with meaningful description",
+      "passed": true,
+      "evidence": "Has '## Summary' section with accurate description of skill-creator's purpose"
+    },
+    {
+      "text": "Output includes Stack line",
+      "passed": false,
+      "evidence": "Uses a markdown table for stack info instead of '**Stack:** ...' single-line format"
+    }
+  ]
+}

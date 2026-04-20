@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "claudboard",
+  "description": "Deep-analyzes brownfield projects and generates production-ready Claude Code onboarding artifacts.",
+  "owner": {
+    "name": "LUP1BG"
+  },
+  "plugins": [
+    {
+      "name": "claudboard",
+      "description": "Analyzes any existing project and generates CLAUDE.md, rules, and full-scope skills tailored to its actual patterns.",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}

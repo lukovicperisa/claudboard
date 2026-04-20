@@ -1,0 +1,33 @@
+{
+  "eval_id": 1,
+  "eval_name": "scan-caveman-plugin",
+  "configuration": "without_skill",
+  "pass_rate": 0.6,
+  "expectations": [
+    {
+      "text": "Output contains a scan header referencing the target",
+      "passed": true,
+      "evidence": "Line 1: '# Repository Scan: caveman' — identifies what was scanned"
+    },
+    {
+      "text": "Output includes a Structure section",
+      "passed": false,
+      "evidence": "Uses '## Directory Structure and Key Files' (h2) not '### Structure' (h3); different heading level and label"
+    },
+    {
+      "text": "Output detects shell scripts as primary content type",
+      "passed": true,
+      "evidence": "Mentions hooks/*.sh files and JavaScript hooks throughout; table row: 'Claude Code hooks | JavaScript (Node.js, no npm dependencies)'"
+    },
+    {
+      "text": "Output mentions SKILL.md as a key file",
+      "passed": true,
+      "evidence": "Multiple SKILL.md references in directory tree: 'skills/caveman/SKILL.md # Core caveman mode...'"
+    },
+    {
+      "text": "Output includes a Summary section",
+      "passed": false,
+      "evidence": "Has '## Summary' (h2) not '### Summary' (h3); different heading level"
+    }
+  ]
+}

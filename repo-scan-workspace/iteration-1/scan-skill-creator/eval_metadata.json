@@ -1,0 +1,37 @@
+{
+  "eval_id": 2,
+  "eval_name": "scan-skill-creator",
+  "prompt": "/repo-scan /Users/LUP1BG/.claude/plugins/cache/claude-plugins-official/skill-creator/unknown",
+  "assertions": [
+    {
+      "text": "Output contains '## Repo scan' header",
+      "type": "string_match",
+      "pattern": "## Repo scan"
+    },
+    {
+      "text": "Output detects Python as a primary language",
+      "type": "semantic",
+      "description": "Report identifies Python as the main language (due to scripts/*.py files)"
+    },
+    {
+      "text": "Output includes a Structure section",
+      "type": "string_match",
+      "pattern": "### Structure"
+    },
+    {
+      "text": "Output mentions SKILL.md or skill-creator as entry point",
+      "type": "semantic",
+      "description": "Report references SKILL.md as the main skill definition entry point"
+    },
+    {
+      "text": "Output includes a Summary section with meaningful description",
+      "type": "semantic",
+      "description": "Summary explains what skill-creator is/does (creating/evaluating Claude Code skills)"
+    },
+    {
+      "text": "Output includes Stack line with Python",
+      "type": "string_match",
+      "pattern": "\\*\\*Stack\\*\\*"
+    }
+  ]
+}
