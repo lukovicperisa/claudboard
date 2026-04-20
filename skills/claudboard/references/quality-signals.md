@@ -13,9 +13,11 @@ Rate each dimension during analysis. Use these to determine adaptive rule depth:
 | Testing | Test framework + coverage + CI gate | Tests exist, no coverage threshold | No tests or tests not in CI |
 | Architecture | Clear pattern, consistently applied | Pattern visible but inconsistent | No discernible pattern, ad hoc |
 | Conventions | Enforced via lint/CI, consistent | Mostly consistent, occasional drift | Inconsistent, no enforcement |
-| Dependencies | Pinned versions, no duplicates, current | Minor version debt | Major version debt, duplicates |
+| Dependencies | Pinned versions, BOM present, SBOM generated | Minor version debt, no BOM | Major version debt, cross-module mismatches |
 | CI/CD | Multi-stage, quality gates, IaC | Basic CI, manual deploy | No CI or no deploy automation |
 | Documentation | README + CLAUDE.md + inline where needed | README only | No documentation |
+| Security | Security framework + method-level auth | Security framework, no method-level auth | No security framework detected |
+| Observability | Actuator + metrics + tracing | Actuator or metrics only | No observability tooling |
 
 **Adaptive rule depth decision:**
 - 4+ dimensions "Good" → **Full rules** (100-120 lines with code examples)
@@ -65,10 +67,35 @@ Run in parallel during Phase 1. Check each item and record finding.
 - [ ] Parallel class hierarchies? (classes with shared prefix/suffix: Root*/Branch*/Leaf*, *V1/*V2 — if found, diff key methods across hierarchies for duplication)
 - [ ] Copy-paste duplication? (pick 2-3 distinctive code patterns from sampled files, grep for them — if same ~5-line block appears 3+ times in different files, flag it)
 
+### Security
+- [ ] Security framework present? (`SecurityFilterChain`, `@EnableMethodSecurity`, `@EnableWebSecurity`)
+- [ ] Method-level auth annotations? (`@PreAuthorize`, `@Secured`, `@RolesAllowed`, or custom auth annotations)
+- [ ] Custom auth annotation detected? (check `@interface` declarations with auth/authorize in name + `@Aspect` co-located)
+- [ ] Auth coverage gap? (compare total controller endpoints count vs auth-annotated endpoint count — if AUTH < TOTAL: flag unprotected routes)
+- [ ] CORS configured? (`CorsConfigurationSource`, `@CrossOrigin`, `addCorsMappings`)
+- [ ] Auth filter chain? (`extends OncePerRequestFilter` or `implements Filter` in main source)
+
+### API Surface
+- [ ] Endpoint count tallied? (sum of `@GetMapping`, `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping`)
+- [ ] API versioning strategy? (URL-based `/v1/`, `/v2/` in `@RequestMapping` values — or absent)
+- [ ] OpenAPI/Swagger tooling? (`springdoc-openapi`, `springfox`, or `swagger` in dependencies)
+- [ ] Pagination pattern? (check for `Pageable`, `Page<T>` in controller signatures)
+
+### Observability
+- [ ] Spring Actuator present? (`spring-boot-starter-actuator` in dependencies)
+- [ ] Actuator endpoints configured? (`management.endpoints` in application properties)
+- [ ] Metrics library present? (`micrometer-core` or `@Timed` annotations)
+- [ ] Distributed tracing? (`micrometer-tracing`, `spring-cloud-sleuth`, `io.opentelemetry`)
+- [ ] Structured logging? (`logstash-logback-encoder` dep or `net.logstash.logback` imports)
+
 ### Dependencies
 - [ ] Version pinning strategy? (exact, patch, minor, major ranges)
+- [ ] BOM (Bill of Materials) used? (`platform(` in Gradle, `<dependencyManagement>` BOM import in Maven)
 - [ ] Mixed lockfiles? (package-lock + yarn.lock)
 - [ ] Framework version current? (check against LTS/latest)
+- [ ] Cross-module version mismatches? (same dep at different versions across modules — MEDIUM severity)
+- [ ] Dependency conflict resolution? (`resolutionStrategy`/`force =` in Gradle, `<exclusions>` in Maven)
+- [ ] SBOM generation? (`cyclonedx` or `spdx` plugin in build or CI)
 - [ ] Security scanning? (Snyk, Dependabot, OWASP dependency-check)
 - [ ] No hardcoded secrets? (grep for password=, api_key=, secret=)
 
@@ -107,17 +134,32 @@ Evidence: [test framework, CI gate status, coverage %]
 Evidence: [linting config, sample finding]
 
 **Dependency health:** [Current / Minor debt / Major debt]
-Evidence: [versions found, any issues]
+Evidence: [versions found, BOM status, SBOM, cross-module mismatches if any]
 
 **CI/CD maturity:** [Full pipeline / Basic CI / Missing]
 Evidence: [pipeline stages found]
+
+**Security:** [Enforced / Basic / Missing]
+Evidence: [security framework, method-level auth, CORS config, auth coverage gap]
+
+**Observability:** [Good / Acceptable / Debt]
+Evidence: [actuator, metrics, tracing, structured logging]
+
+**API Surface:**
+- Controllers: N | Endpoints: ~M (GET:X POST:Y PUT:Z DELETE:W)
+- Versioning: [URL-based v1/v2 / None detected]
+- Documentation: [springdoc-openapi / springfox / None]
 
 **Preserve:**
 - [Good pattern 1] — [where found]
 - [Good pattern 2] — [where found]
 
 **Watch:**
-- [WARN] [Anti-pattern or inconsistency] — [file/location]
+- [SEVERITY] [Anti-pattern or inconsistency] — [file/location]
+- [HIGH — compound] [Finding A] + [Finding B] → [risk description] (individually: [severityA] + [severityB])
+
+**Skill overlap detected (if any):**
+- `[skill-a]` and `[skill-b]` overlap — both target [shared files/triggers]. Merge into one or keep separate with distinct scopes?
 
 **Debt:**
 - [INFO] [Tech debt item] — [impact if not addressed]
@@ -225,3 +267,26 @@ These triggers are discovered dynamically from the repo's own code, not pre-defi
 4. Keep at least 1 custom pattern skill if any were found
 
 **Minimum:** Generate at least 1 skill if any signal is found. A project with zero skills is under-served.
+
+### Skill Deduplication (run after trigger collection, before Phase 2 report)
+
+After all skill triggers are collected, check each pair of proposed skills for overlap:
+
+**Overlap criteria (either condition triggers dedup check):**
+1. **File glob intersection >50%** — e.g., both `mongodb-entity` and `leaf-entity` target `**/model/*.java`
+2. **Same trigger annotation in both scopes** — e.g., `@Document` fires for both mongodb-persistence and a custom hierarchy skill
+
+**Action:**
+- Flag overlapping pairs in the Phase 2 report under "Skill overlap detected"
+- Ask user: "These skills overlap — merge into one or keep separate with distinct scopes?"
+- If merge: generate one combined skill in Phase 3 covering both concerns
+- If keep separate: add explicit scope distinction to each SKILL.md description field
+- **Never auto-merge without user confirmation**
+
+**Common overlaps to watch for:**
+
+| Pair | Why they overlap | Resolution guidance |
+|------|-----------------|-------------------|
+| `mongodb-entity` + custom hierarchy skill | MongoDB entities ARE the hierarchy entities | Merge; hierarchy skill covers entity creation end-to-end |
+| `rest-controller` + `leaf-entity` | Leaf entity skill creates controllers too | Keep separate; leaf-entity is end-to-end, rest-controller is controller-only |
+| `use-case` + `domain-service` | Same concept, different names | Merge; pick name matching codebase vocabulary |

@@ -181,6 +181,15 @@ When reflection is deeply embedded in the architecture (e.g., cascade callbacks 
 | No integration tests | Only unit tests, no integration or contract tests | MEDIUM |
 | Missing test for CI | Tests not wired to CI pipeline | HIGH |
 
+### Security Anti-Patterns
+
+| Anti-pattern | Detection method | Severity |
+|-------------|-----------------|---------|
+| No security framework | No `SecurityFilterChain`, `@EnableMethodSecurity`, or equivalent in production source | HIGH |
+| Unprotected REST endpoints | Controller endpoint count > auth-annotated endpoint count | MEDIUM — verify intentional public routes |
+| No CORS configuration | REST controllers exist but no `CorsConfigurationSource`, `@CrossOrigin`, or CORS WebMvcConfigurer | INFO — verify if frontend on same origin |
+| Method-level auth absent | Security framework present but no `@PreAuthorize`/`@Secured`/custom auth annotations | MEDIUM — class-level or filter-level auth may cover this; verify |
+
 ### Infrastructure Anti-Patterns
 
 | Anti-pattern | Detection method | Severity |
@@ -190,6 +199,28 @@ When reflection is deeply embedded in the architecture (e.g., cascade callbacks 
 | Hardcoded secrets | Literal passwords/API keys in source code | CRITICAL |
 | No CI | No CI configuration file | HIGH |
 | Manual deployment | No IaC, no pipeline — manual steps documented | HIGH |
+
+---
+
+## Compound Severity Rules
+
+When two anti-patterns co-occur, their combined risk is greater than the sum of individual severities. Apply these rules during Phase 2 after collecting all Watch findings. Report with `[SEVERITY — compound]` label.
+
+| Finding A | Finding B | Escalated Severity | Risk |
+|-----------|-----------|-------------------|------|
+| `return null` (INFO) | Reflection in CRUD hot path (HIGH) | HIGH | Null propagates silently through reflection-driven cascade operations — data loss with no compiler warning |
+| Broad `catch (Exception)` (MEDIUM) | Cascading deletes (any severity) | HIGH | Swallowed exceptions during cascades leave data in inconsistent state |
+| God class (MEDIUM) | No tests covering that class (MEDIUM) | HIGH | Untestable complexity: changes to large class have no safety net |
+| No security framework (HIGH) | PII fields in response DTOs (any) | CRITICAL | Personal data exposed with no access control |
+| Missing retry logic (MEDIUM) | `@FeignClient` or external HTTP calls (any) | HIGH | Transient failures cascade to user-facing errors in distributed calls |
+
+**Reporting format for compound findings:**
+```
+- [HIGH — compound] return null × 12 + reflection in CRUD hot path → silent data loss risk in cascade operations
+  (individually: null returns = INFO, reflection = HIGH — together they compound)
+```
+
+**Adding new compound rules:** Edit this table in `pattern-catalog.md`. Scanner picks them up on next run. No code changes needed.
 
 ---
 

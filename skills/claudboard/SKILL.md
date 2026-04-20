@@ -176,6 +176,8 @@ grep -rl 'LoggerFactory.getLogger' --include='*.java' src/ | wc -l
 ls src/test/**/*Test.java src/test/**/*Spec.groovy 2>/dev/null | head -5
 ```
 
+Also run security, API surface, and observability scans **in the same parallel pass** — see `references/stack-detectors.md` → "Security posture signals", "API surface signals", "Observability signals". Record findings alongside anti-patterns.
+
 **Output: Pattern Inventory** (internal — use it to drive step 1d decisions):
 ```
 inheritance_map: [base class → subclass count + sample files]
@@ -184,6 +186,10 @@ skill_triggers: [trigger → count + best_example file]
 anti_patterns: [type → severity + count + files]
 god_class_candidates: [file → LOC]
 conventions: {di_style, logging, test_naming}
+security: {framework, method_level_auth, cors, custom_auth_annotation, auth_coverage_gap}
+api_surface: {total_endpoints, by_method, versioning, openapi_tooling}
+observability: {actuator, metrics, tracing, structured_logging}
+dependency_deep: {bom, sbom, conflict_resolution, cross_module_mismatches}
 ```
 
 ### 1d. Strategic sampling (replaces random file selection)
@@ -293,8 +299,30 @@ Load `references/pattern-catalog.md` to identify architecture patterns and anti-
 
 ### Quality Assessment
 **Architecture maturity:** [Established / Transitional / Ad-hoc]
+Evidence: [1 sentence]
+
 **Testing coverage:** [Comprehensive / Basic / Missing]
+Evidence: [framework, CI gate, coverage %]
+
 **Convention consistency:** [Enforced / Mostly consistent / Inconsistent]
+Evidence: [linting, sample finding]
+
+**Dependency health:** [Current / Minor debt / Major debt]
+Evidence: [versions, BOM status, SBOM, cross-module mismatches]
+
+**CI/CD maturity:** [Full pipeline / Basic CI / Missing]
+Evidence: [pipeline stages]
+
+**Security:** [Enforced / Basic / Missing]
+Evidence: [framework, method-level auth, CORS, auth coverage gap]
+
+**Observability:** [Good / Acceptable / Debt]
+Evidence: [actuator, metrics, tracing, structured logging]
+
+**API Surface:**
+- Controllers: N | Endpoints: ~M (GET:X POST:Y PUT:Z DELETE:W)
+- Versioning: [URL-based v1/v2 / None detected]
+- Documentation: [springdoc-openapi / springfox / None]
 
 **Reflection usage:** [None / Config-only / Business-logic (flag)] — from Phase 1e grep
 **Code duplication:** [None detected / Minor / Structural (parallel hierarchies)] — from Phase 1f
@@ -303,12 +331,16 @@ Load `references/pattern-catalog.md` to identify architecture patterns and anti-
 - <good pattern> — <where found>
 
 **Watch:**
-- [WARN] <anti-pattern> — <file/location>
+- [SEVERITY] <anti-pattern> — <file/location>
 Include findings from Phase 1e (call-path tracing) and Phase 1f (duplication detection).
 For reflection or deeply-embedded anti-patterns: note whether they belong
 in conventions rules (actionable today) or tech-debt rules (document but
 can't avoid in current architecture). See pattern-catalog.md →
 "Reflection Anti-Patterns" → "Reporting guidance".
+
+After listing all Watch findings, **apply compound severity rules** from `pattern-catalog.md` → "Compound Severity Rules":
+- Check each pair of Watch findings against the compound severity table
+- For any matching pair, add a compound entry: `[HIGH — compound] Finding A + Finding B → risk description (individually: severityA + severityB)`
 
 **Debt:**
 - [INFO] <tech debt> — <impact>
@@ -322,6 +354,13 @@ can't avoid in current architecture). See pattern-catalog.md →
 - `<filename>.md` (paths: `<glob>`) — <what it covers, adaptive depth: full/medium/skeleton>
 
 **Skills (M to generate):**
+
+Before listing skills, **run skill dedup check** (see `references/quality-signals.md` → "Skill Deduplication"):
+- Compare each pair of proposed skills for file glob overlap >50% or shared trigger annotations
+- If overlap found: list the pair and ask user to merge or keep separate before proceeding
+- Document decision in the skill descriptions
+
+[If no overlap or after user resolves overlap:]
 - `<skill-name>/` — <what triggers it, what it creates, full scope: SKILL.md + references/ + scripts/>
 
 [If existing .claude/ found:]
@@ -339,6 +378,7 @@ If n: which parts should I skip or change?
 If patterns are ambiguous or inconsistent, ask the user now — e.g.:
 - "Found both field injection and constructor injection — which should be the standard?"
 - "Naming conventions vary between modules — document the predominant pattern or leave as TODO?"
+- "Skills X and Y overlap — merge into one or keep separate?"
 
 ---
 

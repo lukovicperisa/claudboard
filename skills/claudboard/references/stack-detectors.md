@@ -295,6 +295,103 @@ SLF4J_FACTORY=$(grep -rl 'LoggerFactory.getLogger' --include='*.java' src/ | wc 
 find src/test -name '*Test.java' -o -name '*Spec.groovy' -o -name '*IT.java' 2>/dev/null | head -5
 ```
 
+**Security posture signals:**
+```bash
+# Spring Security framework
+grep -rl 'SecurityFilterChain\|@EnableMethodSecurity\|@EnableWebSecurity' \
+  --include='*.java' src/main/
+
+# Method-level auth annotations
+grep -rn '@PreAuthorize\|@Secured\|@RolesAllowed' --include='*.java' src/main/
+
+# Custom auth annotations (detect name, then count usage)
+# Step 1: find custom @interface annotations with auth-related names
+grep -rn '@interface.*[Aa]uthor\|@interface.*[Aa]uth\|@interface.*[Ss]ecur' \
+  --include='*.java' src/main/
+# Step 2: for each found annotation (e.g. @Authorize), count usage on controller methods
+grep -rn '@Authorize\|@RequiresAuth' --include='*.java' src/main/ | wc -l
+
+# Auth filters (custom OncePerRequestFilter implementations)
+grep -rn 'extends OncePerRequestFilter\|implements Filter' --include='*.java' src/main/
+
+# CORS configuration
+grep -rl 'CorsConfigurationSource\|@CrossOrigin\|addCorsMappings\|CorsConfiguration' \
+  --include='*.java' src/main/
+
+# Endpoint count vs auth-annotated endpoint count (coverage gap detection)
+TOTAL_ENDPOINTS=$(grep -rc '@GetMapping\|@PostMapping\|@PutMapping\|@DeleteMapping\|@PatchMapping\|@RequestMapping' \
+  --include='*.java' src/main/ | awk -F: '{s+=$2}END{print s}')
+AUTH_ENDPOINTS=$(grep -rc '@PreAuthorize\|@Secured\|@Authorize\|@RolesAllowed' \
+  --include='*.java' src/main/ | awk -F: '{s+=$2}END{print s}')
+# If AUTH_ENDPOINTS < TOTAL_ENDPOINTS: flag potential unprotected routes
+```
+
+**API surface signals:**
+```bash
+# Endpoint tally by HTTP method
+GET_COUNT=$(grep -rc '@GetMapping' --include='*.java' src/main/ | awk -F: '{s+=$2}END{print s}')
+POST_COUNT=$(grep -rc '@PostMapping' --include='*.java' src/main/ | awk -F: '{s+=$2}END{print s}')
+PUT_COUNT=$(grep -rc '@PutMapping' --include='*.java' src/main/ | awk -F: '{s+=$2}END{print s}')
+DELETE_COUNT=$(grep -rc '@DeleteMapping' --include='*.java' src/main/ | awk -F: '{s+=$2}END{print s}')
+PATCH_COUNT=$(grep -rc '@PatchMapping' --include='*.java' src/main/ | awk -F: '{s+=$2}END{print s}')
+# Report: "GET:N POST:M PUT:P DELETE:Q PATCH:R  total: N+M+P+Q+R endpoints"
+
+# API versioning (URL-based)
+grep -rn '@RequestMapping.*v[0-9]\|@GetMapping.*v[0-9]\|@PostMapping.*v[0-9]' \
+  --include='*.java' src/main/ | grep -oP '/v\d+/' | sort -u
+# If versions found: report "URL-based versioning: v1, v2..." else "No versioning detected"
+
+# OpenAPI / Swagger documentation tooling (check deps, not source)
+# Look in build.gradle or pom.xml (handled in dep detection step):
+grep -r 'springdoc\|springfox\|swagger' build.gradle settings.gradle pom.xml 2>/dev/null | head -5
+```
+
+**Observability signals:**
+```bash
+# Spring Actuator
+grep -r 'spring-boot-starter-actuator' build.gradle pom.xml 2>/dev/null
+
+# Micrometer metrics
+grep -r 'micrometer-core\|micrometer-registry' build.gradle pom.xml 2>/dev/null
+grep -rn '@Timed\|MeterRegistry' --include='*.java' src/main/ | wc -l
+
+# Distributed tracing
+grep -r 'micrometer-tracing\|spring-cloud-sleuth\|io\.opentelemetry\|opentelemetry-api' \
+  build.gradle pom.xml 2>/dev/null
+
+# Structured logging
+grep -r 'logstash-logback-encoder\|logback-json' build.gradle pom.xml 2>/dev/null
+grep -rn 'net\.logstash\.logback' --include='*.java' --include='*.xml' src/ 2>/dev/null | wc -l
+
+# Actuator endpoint config
+grep -rn 'management\.endpoints\|management\.endpoint' \
+  src/main/resources/application*.yml src/main/resources/application*.properties 2>/dev/null | head -5
+```
+
+**Dependency deep-scan signals:**
+```bash
+# BOM usage (Gradle)
+grep -rn 'platform(\|enforcedPlatform(' --include='*.gradle' --include='*.kts' .
+
+# BOM usage (Maven)
+grep -rn '<type>pom</type>' pom.xml 2>/dev/null
+
+# Dependency conflict resolution (Gradle)
+grep -rn 'resolutionStrategy\|force =\|forceVersion' --include='*.gradle' --include='*.kts' .
+# Dependency exclusions (Maven)
+grep -c '<exclusion>' pom.xml 2>/dev/null
+
+# SBOM generation
+grep -r 'cyclonedx\|spdx\|sbom' build.gradle pom.xml azure-pipelines.yml .github/workflows/*.yml 2>/dev/null
+
+# Cross-module version mismatch (multi-module Gradle projects)
+# After detecting multi-module, compare same dep version across included build files:
+grep -rn 'testcontainers\|spring-boot\|mapstruct' \
+  --include='*.gradle' --include='*.kts' --include='*.toml' . \
+  | grep -v '.gradle/\|build/' | sort
+# If same artifact appears at different versions across modules: flag MEDIUM severity
+```
+
 ---
 
 ### TypeScript / JavaScript
