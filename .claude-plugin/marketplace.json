@@ -1,5 +1,4 @@
 {
-  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "claudboard",
   "description": "Deep-analyzes brownfield projects and generates production-ready Claude Code onboarding artifacts.",
   "owner": {
