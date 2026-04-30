@@ -24,7 +24,7 @@ Path defaults to the current working directory.
 
 ---
 
-## Step 1: Load Analysis Report
+## Phase 1: Load Analysis Report
 
 **Recommendation:** Run this skill in a fresh Claude Code session for best results. The analysis phase fills context with discovery data that isn't needed for generation — a clean session gives better output quality.
 
@@ -41,9 +41,9 @@ Look for `.claude/reports/claudboard-analysis.md` in the target project.
 
 ---
 
-## Step 2: Confirmation
+## Phase 2: Confirmation
 
-Show the Proposed Artifacts from the report:
+Show the Proposed Artifacts from the report. If the report contains skill dedup decisions (merged or separated skills), preserve those decisions — don't re-evaluate.
 
 ```
 ## Artifacts to Generate
@@ -69,7 +69,7 @@ If n: which parts should I skip or change?
 
 ---
 
-## Step 3: Generate Artifacts
+## Phase 3: Generate Artifacts
 
 Write files to `.claude/` in the target project. Never write outside `.claude/` (except CLAUDE.md at project root). Never modify existing source files.
 
@@ -161,6 +161,15 @@ If Claude stumbles on any of these, run `/refresh` to update the artifacts.
 
 ---
 
+## Error Handling
+
+| Condition | Behavior |
+|-----------|----------|
+| Target path doesn't exist | Report error with path and stop |
+| No analysis report found | Tell user to run `/analyse` first, stop — do not analyse inline |
+| Report older than 24 hours | Warn but proceed if user confirms |
+| Report contains unresolved ambiguities or "ASK USER" markers | Pause and ask user before generating those artifacts |
+
 ## Constraints
 
 - **Write only to `.claude/` and project-root CLAUDE.md.**
@@ -172,6 +181,6 @@ If Claude stumbles on any of these, run `/refresh` to update the artifacts.
 
 | File | When to load |
 |------|-------------|
-| `../claudboard/references/claude-md-template.md` | Step 3a — CLAUDE.md generation |
-| `../claudboard/references/rule-templates.md` | Step 3b — rule file generation |
-| `../claudboard/references/skill-generation.md` | Step 3c — full-scope skill generation |
+| `../claudboard/references/claude-md-template.md` | Phase 3a — CLAUDE.md generation |
+| `../claudboard/references/rule-templates.md` | Phase 3b — rule file generation |
+| `../claudboard/references/skill-generation.md` | Phase 3c — full-scope skill generation |

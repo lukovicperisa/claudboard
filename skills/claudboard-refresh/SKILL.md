@@ -23,7 +23,7 @@ Path defaults to the current working directory.
 
 ---
 
-## Step 1: Prerequisite Check
+## Phase 1: Prerequisite Check
 
 Verify the project has existing Claude context — at least one of:
 - `CLAUDE.md` at project root
@@ -34,7 +34,7 @@ Verify the project has existing Claude context — at least one of:
 
 ---
 
-## Step 2: Inventory Existing Artifacts
+## Phase 2: Inventory Existing Artifacts
 
 Read all existing Claude artifacts and build a coverage map:
 
@@ -58,7 +58,7 @@ Read all existing Claude artifacts and build a coverage map:
 
 ---
 
-## Step 3: Delta Discovery
+## Phase 3: Delta Discovery
 
 Load `../claudboard/references/stack-detectors.md` for detection heuristics.
 
@@ -94,7 +94,7 @@ Compare Wide Scan results against existing artifacts:
 
 ---
 
-## Step 4: Gap Analysis Report
+## Phase 4: Gap Analysis Report
 
 Load `../claudboard/references/pattern-catalog.md` and `../claudboard/references/quality-signals.md` for assessment.
 
@@ -137,7 +137,7 @@ If selective: which parts should I apply?
 
 ---
 
-## Step 5: Selective Generation
+## Phase 5: Selective Generation
 
 Apply only the confirmed updates. Load references as needed:
 - `../claudboard/references/claude-md-template.md` → for CLAUDE.md updates
@@ -164,15 +164,25 @@ Unchanged:
 - [list of artifacts that needed no update]
 
 Next refresh: run `/refresh` after significant codebase changes
+For tech debt analysis and refactoring tickets: run `/techdebt`
 ```
 
 ---
 
-## Step 6: Save Updated Report
+## Phase 6: Save Updated Report
 
 Overwrite `.claude/reports/claudboard-analysis.md` with a fresh full analysis (combining prior report data with new discoveries). Update `generated_at` timestamp.
 
 ---
+
+## Error Handling
+
+| Condition | Behavior |
+|-----------|----------|
+| Target path doesn't exist | Report error with path and stop |
+| No existing `.claude/` context found | Tell user to run `/analyse` first, stop |
+| Prior analysis report malformed/unreadable | Ignore it, run abbreviated Wide Scan as if no prior report |
+| Git history unavailable | Skip git-based delta detection, run full Wide Scan comparison instead |
 
 ## Constraints
 

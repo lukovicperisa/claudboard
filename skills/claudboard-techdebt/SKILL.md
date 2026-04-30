@@ -186,7 +186,7 @@ For each code smell type, create debt items from scan results:
 - Copy-paste: identify repeated patterns, suggest extraction target
 - Broad catches: distinguish swallow vs wrap-rethrow
 
-Assign severity + effort from `references/severity-matrix.md`. Apply compound rules.
+Assign severity + effort from `references/severity-matrix.md`. Apply compound severity rules: when two findings co-occur (e.g., God class + no tests), escalate severity per the compound table in severity-matrix.md. See that file for the application algorithm.
 
 ### Pass 2: Design Pattern Analysis
 
@@ -225,7 +225,7 @@ For each candidate from Phase 1 scans:
 
 **Other patterns:** Factory (repeated `new` with many args), Observer (nested callbacks)
 
-Create debt item per finding with pattern sketch.
+Create debt item per finding with pattern sketch. Sketches should be pseudo-code outlines (5-10 lines) + file-to-modify list — this is a ticket spec, not the solution code.
 
 ### Pass 3: Performance Flow Analysis
 

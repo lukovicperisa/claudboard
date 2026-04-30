@@ -53,9 +53,11 @@ Sub-skills load these shared references as needed:
 
 | File | Used by | Purpose |
 |------|---------|---------|
-| `references/stack-detectors.md` | analyse | Detection heuristics per language/framework |
-| `references/pattern-catalog.md` | analyse | Architecture patterns + anti-patterns catalog |
-| `references/quality-signals.md` | analyse | Quality scoring, rule depth, skill triggers |
+| `references/stack-detectors.md` | analyse, techdebt | Detection heuristics per language/framework |
+| `references/pattern-catalog.md` | analyse, techdebt | Architecture patterns + anti-patterns catalog |
+| `references/quality-signals.md` | analyse, refresh | Quality scoring, rule depth, skill triggers |
 | `references/claude-md-template.md` | generate | CLAUDE.md generation template |
 | `references/rule-templates.md` | generate | Rule file templates per language |
 | `references/skill-generation.md` | generate | Full-scope skill generation guide |
+
+The techdebt skill also has its own references in `../claudboard-techdebt/references/`: code-smell-catalog, design-debt-patterns, perf-debt-patterns, arch-debt-patterns, severity-matrix, and report-template.

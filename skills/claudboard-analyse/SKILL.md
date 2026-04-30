@@ -406,8 +406,8 @@ After saving, ask the user:
 
 > Should I continue with artifact generation? (Recommended: run `/generate` in a fresh session for best results — the analysis phase fills context with discovery data that isn't needed during generation.)
 
-- If yes: proceed with generation by following `../claudboard-generate/SKILL.md` steps
-- If no: end with "Analysis saved to `.claude/reports/claudboard-analysis.md`. Run `/generate` in a fresh session when ready."
+- If yes: tell the user "Starting generation. Note: for best results, run `/generate` in a fresh session — the analysis phase fills context with discovery data not needed for generation. Continue anyway?" If they still want to proceed, follow `../claudboard-generate/SKILL.md` steps.
+- If no: end with "Analysis saved to `.claude/reports/claudboard-analysis.md`. Run `/generate` in a fresh session when ready. For tech debt analysis, run `/techdebt`."
 
 ---
 
