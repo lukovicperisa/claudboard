@@ -4,7 +4,7 @@ description: >
   Generates Claude Code artifacts (CLAUDE.md, rules, full-scope skills) from a
   claudboard analysis report. Reads .claude/reports/claudboard-analysis.md and
   produces production-ready .claude/ artifacts tailored to the project's actual
-  patterns. Can run standalone if no report exists (will analyse first).
+  patterns. Requires a prior `/analyse` run — does not analyse inline.
   Use when: /generate, "generate rules", "create CLAUDE.md", "bootstrap Claude
   for this repo", "generate skills for this project", "set up Claude Code for
   this project", "onboard this project".
@@ -25,6 +25,8 @@ Path defaults to the current working directory.
 ---
 
 ## Step 1: Load Analysis Report
+
+**Recommendation:** Run this skill in a fresh Claude Code session for best results. The analysis phase fills context with discovery data that isn't needed for generation — a clean session gives better output quality.
 
 Look for `.claude/reports/claudboard-analysis.md` in the target project.
 
@@ -128,6 +130,33 @@ Next steps:
 - Review generated artifacts and adjust to team preferences
 - Run `/refresh` as the project evolves to keep artifacts current
 - Flesh out any TODO sections in skeleton rules or skills
+- Try the suggested validation tasks below to verify artifacts work
+```
+
+### 3e. Validation suggestions
+
+After presenting the completion report, propose 3-5 representative tasks the user can try in a fresh Claude Code session to verify the generated artifacts actually help. Select tasks based on what was detected:
+
+**Task selection** (pick 3-5 from this priority list based on what was generated):
+
+1. **If skills were generated:** "Create a new [entity/component/endpoint] using the generated `[skill-name]` skill" — tests whether the skill workflow produces correct code
+2. **If rules cover conventions:** "Modify [file from god-class list or hotspot] — does Claude follow the [DI/logging/error-handling] conventions?" — tests rule loading
+3. **If CLAUDE.md has build commands:** "Build and test the project" — tests whether the commands table is accurate
+4. **If infra rules generated:** "Add a new [Helm value/pipeline step/Dockerfile]" — tests infrastructure context
+5. **If testing rules generated:** "Write tests for [existing untested file]" — tests test convention rules
+
+**Output format:**
+
+```
+## Suggested Validation Tasks
+
+Try these in a fresh Claude Code session to verify the artifacts work:
+
+1. [Task description] — validates: [artifact name]
+2. [Task description] — validates: [artifact name]
+3. [Task description] — validates: [artifact name]
+
+If Claude stumbles on any of these, run `/refresh` to update the artifacts.
 ```
 
 ---

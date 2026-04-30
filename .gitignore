@@ -1,0 +1,11 @@
+# Local workspace for benchmarks and iterations
+repo-scan-workspace/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+*.swp
+*.swo

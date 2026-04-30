@@ -9,29 +9,32 @@ This file provides guidance to Claude Code when working in this repository.
 ## Skill Anatomy
 
 ```
-skills/claudboard/
-├── SKILL.md                          # Main skill orchestrator (~500 lines)
-├── references/
-│   ├── stack-detectors.md            # Detection heuristics per language/framework
-│   ├── pattern-catalog.md            # Architecture patterns + anti-patterns catalog
-│   ├── quality-signals.md            # Quality scoring + adaptive rule depth guide
-│   ├── claude-md-template.md         # CLAUDE.md generation template (craftsphere gold standard)
-│   ├── rule-templates.md             # Rule file templates per language
-│   └── skill-generation.md          # Full-scope skill generation guide + scaffold patterns
-└── evals/
-    └── evals.json                    # Test cases across repo types
+skills/
+├── claudboard/
+│   ├── SKILL.md                      # Dispatcher — routes to /analyse, /generate, /refresh, /techdebt
+│   └── references/                   # Shared reference files loaded by sub-skills
+│       ├── stack-detectors.md        # Detection heuristics per language/framework
+│       ├── pattern-catalog.md        # Architecture patterns + anti-patterns catalog
+│       ├── quality-signals.md        # Quality scoring + adaptive rule depth guide
+│       ├── claude-md-template.md     # CLAUDE.md generation template
+│       ├── rule-templates.md         # Rule file templates per language
+│       └── skill-generation.md       # Full-scope skill generation guide
+├── claudboard-analyse/SKILL.md       # Discovery & analysis (read-only, saves report)
+├── claudboard-generate/SKILL.md      # Artifact generation from analysis report
+├── claudboard-refresh/SKILL.md       # Delta updates for existing projects
+└── claudboard-techdebt/SKILL.md      # Deep tech debt analysis
 ```
 
 ## Development Workflow
 
-- Edit `skills/claudboard/SKILL.md` and reference files → test via Skill tool → iterate
+- Edit sub-skill SKILL.md files and reference files → test via Skill tool → iterate
 - Use `skill-creator` to run evaluations: `/skill-creator`
 - Reference files are loaded on-demand — keep them focused and comprehensive
 - Evals target different repo types: Spring Boot monorepo, TypeScript service, Python agent
 
 ## Key Design Decisions
 
-- **3-phase flow**: Discovery (read-only) → Analysis Report + proposal → Artifact generation (writes to `.claude/` only after user confirms)
+- **Two-step workflow**: `/analyse` (read-only, saves report) → `/generate` (writes artifacts, best in fresh session)
 - **Adaptive rule depth**: Full rules for clean codebases, skeleton for messy, ask user when in doubt
 - **Merge, not replace**: When `.claude/` exists, fill gaps only — never overwrite
 - **Full-scope skills**: Every generated skill has SKILL.md + references/ + scripts/ — no stubs

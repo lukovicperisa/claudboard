@@ -167,6 +167,29 @@ Evidence: [actuator, metrics, tracing, structured logging]
 
 ---
 
+## Token Estimation Guide
+
+Use these heuristics to estimate persistent context overhead for the Phase 2 report.
+
+**Rough token estimates per artifact type:**
+- CLAUDE.md: ~1.2 tokens per line (mostly prose, tables)
+- Rule files: ~1.3 tokens per line (prose + code examples)
+- SKILL.md files: ~1.4 tokens per line (prose + code blocks + YAML frontmatter)
+- Reference files in skills: not loaded by default (on-demand when skill triggers) — exclude from persistent count
+
+**What counts as persistent context:**
+- `CLAUDE.md`: always loaded on every prompt
+- `.claude/rules/*.md`: loaded when the user's query touches files matching the `paths:` globs
+- `.claude/skills/*/SKILL.md`: loaded when the skill description matches user intent (not always)
+
+**Reporting format for Phase 2:**
+- Sum estimated lines across all proposed artifacts
+- Multiply by ~1.3 (blended rate) for token estimate
+- Report as "~X tokens persistent context" in the Context Overhead Estimate table
+- If total exceeds 5,000 tokens: note "substantial context overhead — consider whether all proposed artifacts are needed"
+
+---
+
 ## Rule Depth Decision Guide
 
 After scoring, decide rule depth per language/concern:

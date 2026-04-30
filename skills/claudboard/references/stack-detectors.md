@@ -496,3 +496,25 @@ IMPLS=$(grep -rn 'implements ' --include='*.java' src/main/ | wc -l)
 git log --since=3.months --name-only --format="" 2>/dev/null \
   | grep -v '^$' | sort | uniq -c | sort -rn | head -10
 ```
+
+---
+
+### Project-Specific Workflow Detection
+
+These patterns are not detectable by grep alone. They require reading documentation and reconstructing multi-file workflows. These are the highest-value patterns for skill generation — they capture how *this* project does things, not how a framework works.
+
+**Sources to check:**
+1. `README.md` — look for "Getting Started", "Contributing", "How to add..." sections that describe multi-step rituals
+2. `docs/adr/` or `ADR/` — architecture decision records describing non-obvious workflows or constraints
+3. Most recently added subclass of any base class with 5+ subclasses — reconstruct the workflow by reading the commit that added it:
+   ```bash
+   git log --diff-filter=A --name-only --format="%H %s" -- <subclass-file>
+   ```
+
+**What to record:**
+- Workflow name (e.g., "Add a new leaf entity type")
+- Steps (files created/modified in order)
+- Files involved
+- Source of discovery (README section, ADR, git history)
+
+**When to generate a skill:** If the workflow involves creating 3+ files in a specific order, it is a strong skill candidate with `scaffold.sh` potential. Prioritize these over framework-generic skills (e.g., "add a REST controller") — Claude already knows framework patterns, but not project-specific rituals.
