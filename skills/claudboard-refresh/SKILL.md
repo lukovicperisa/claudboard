@@ -70,10 +70,12 @@ Load `../claudboard/references/stack-detectors.md` for detection heuristics.
 - Focus discovery on changed directories/files only
 
 **If no prior report:**
-- Run lightweight Phase 1 discovery (same as `/analyse` Phase 1 but abbreviated):
-  - Run Wide Scan (step 1c) — grep-based inventory of whole repo
-  - Check structure, build files, new directories, dependency changes
-  - Skip deep strategic sampling (no baseline to compare against — do full `/analyse` instead)
+- Run abbreviated Phase 1 discovery (Wide Scan only, no deep file reading):
+  - 1a: Parallel file detection (build files, CI/CD, container, infra, docs)
+  - 1b: Structure mapping (top-level dirs, monorepo detection)
+  - 1c: Wide Scan — grep-based pattern inventory (inheritance, triggers, anti-patterns, conventions)
+  - Skip strategic sampling, call-path tracing, and duplication detection (no baseline to compare against — those require full `/analyse`)
+  - Goal: build a coverage map to compare against existing artifacts, not a full analysis
 
 ### 3b. Check for drift
 

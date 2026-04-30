@@ -3,19 +3,19 @@
   "evals": [
     {
       "id": 0,
-      "prompt": "/claudboard /Users/LUP1BG/Documents/BoschProjects/craftsphere.cloud",
+      "prompt": "/analyse /Users/LUP1BG/Documents/BoschProjects/craftsphere.cloud",
       "expected_output": "Analyzes a complex polyglot monorepo (Java Spring Boot + React TS + Helm + Azure DevOps). Should detect hexagonal architecture from services/, Module Federation from webpack config, GitOps-only deploy constraint from pipeline, 15+ microservices. Quality assessment shows established architecture, comprehensive testing (Spock + JaCoCo), enforced conventions (Checkstyle + ESLint). Proposes java-conventions, spock-testing-rules, react-conventions, infrastructure-context rules. Proposes rest-controller, mongodb-persistence, kafka-consumer, component, api-hook skills — all full-scope. Should detect existing .claude/ and report what's already covered vs gaps.",
       "files": []
     },
     {
       "id": 1,
-      "prompt": "/claudboard /Users/LUP1BG/Documents/BoschProjects/azure-devops-mcp",
+      "prompt": "/analyse /Users/LUP1BG/Documents/BoschProjects/azure-devops-mcp",
       "expected_output": "Analyzes a TypeScript MCP server project. Should detect: TypeScript/Node.js stack, MCP SDK, Jest testing, ESLint. Architecture: single-service, class-based tool handlers. Should generate typescript-conventions.md rule, mcp-tool skill (full-scope with template for MCP tool handlers). CLAUDE.md with npm scripts and architecture summary. Quality assessment notes well-structured single-service project.",
       "files": []
     },
     {
       "id": 2,
-      "prompt": "/claudboard /Users/LUP1BG/Documents/BoschProjects/worca-cc",
+      "prompt": "/analyse /Users/LUP1BG/Documents/BoschProjects/worca-cc",
       "expected_output": "Analyzes a Python multi-agent orchestration project. Should detect: Python, multi-agent pipeline pattern (5 agents), Node.js dashboard, hooks system. Quality assessment flags missing test coverage. Proposes python-conventions.md rule. Should recognize the multi-agent orchestration pattern and generate relevant skills. CLAUDE.md includes agent pipeline explanation as critical architecture context.",
       "files": []
     },
@@ -27,8 +27,20 @@
     },
     {
       "id": 4,
-      "prompt": "/claudboard /Users/LUP1BG/Documents/BoschProjects/meas/meas.cloud.datahandler",
+      "prompt": "/analyse /Users/LUP1BG/Documents/BoschProjects/meas/meas.cloud.datahandler",
       "expected_output": "Analyzes a mature Spring Boot 3.5.7 + MongoDB + Azure Blob service (138 Java files, 3-module Gradle project). Wide Scan MUST detect: (1) Generic CRUD hierarchy: RootCrudService/BranchCrudService/LeafCrudService abstract base classes each with 3-8 concrete subclasses — this is the PRIMARY architecture pattern. (2) Custom annotations: @Cascade, @References, @Authorize, @ResourceId, @ContainerId. (3) God class: CanvasService.java at 609 LOC. (4) Reflection in business logic: ReflectionUtils.doWithFields() in CRUD hot path. (5) Dual cascade paths: CascadeMongoEventListener + CascadeDeleteCallback both fire on delete. Quality assessment: Established architecture, Basic testing (JUnit5 + Testcontainers, excludes auth/config/dto from JaCoCo), Enforced conventions (100% constructor DI, 0 @Autowired). MUST propose 5+ skills: rest-controller (NoteController as cleanest example), mongodb-entity (AbstractDataEntity with @Cascade/@DBRef), domain-service (extending Leaf/Branch/RootCrudService), leaf-crud-controller (generic CRUD controller hierarchy), cascade-entity (full entity + DTO + Repository + Service creation workflow). MUST propose 6+ rules: java-conventions (constructor DI, SLF4J pattern, exception hierarchy with ErrorCode), crud-hierarchy (Root/Branch/Leaf generic pattern — most important rule), mongo-entity (AbstractDataEntity base, soft delete pattern, @Cascade usage), authorization (AOP @Authorize + @ResourceId/@ContainerId), azure-storage (BlobStorage interface + AzureBlobService adapter pattern), tech-debt (God class, reflection overhead, dual cascade, legacy java.util.Date, testcontainers scope mismatch). CLAUDE.md critical rules must include: GitOps-only deploy (tag_changer.sh pushes to config repo), never add @Autowired (constructor-only DI enforced), use @Cascade/@References for child relationships (not manual cascade code).",
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "/analyse /nonexistent/path/to/project",
+      "expected_output": "Reports that the path does not exist and stops. Does not attempt analysis or create any files. Error message clearly states the invalid path.",
+      "files": []
+    },
+    {
+      "id": 6,
+      "prompt": "/generate",
+      "expected_output": "Reports that no analysis report was found at .claude/reports/claudboard-analysis.md. Instructs the user to run /analyse first. Does not attempt to analyse inline or generate any artifacts.",
       "files": []
     }
   ]

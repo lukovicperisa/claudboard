@@ -77,6 +77,13 @@ Use during Phase 2 to assign severity and effort to each debt item.
 
 When two findings co-occur, escalate. Apply after individual scoring.
 
+**Application algorithm:**
+1. Score each finding individually using the primary rules above
+2. Check each *pair* of findings against the compound table below
+3. If a finding participates in multiple compound rules, take the **highest** escalation
+4. Compound severity cannot exceed CRITICAL
+5. Report format: `[ESCALATED — compound] Finding A + Finding B → risk (individually: sevA + sevB)`
+
 | Finding A | Finding B | Escalated | Risk |
 |-----------|-----------|-----------|------|
 | God class >500 LOC | No tests | CRITICAL | Untestable complexity, any change = risk |
@@ -100,8 +107,18 @@ When two findings co-occur, escalate. Apply after individual scoring.
 
 ### Effort Modifiers
 
-Increase effort by one level when:
+Increase effort by one level when any of these conditions apply. Modifiers stack — if 2+ conditions match, increase by 2 levels (capped at L):
 - No test coverage exists for affected code
 - Change touches >3 modules
 - Debt item has >2 dependencies on other items
 - Code is in a shared library used by other teams
+
+### Category Assignment
+
+Each debt item has ONE primary category. When a finding could belong to multiple categories, assign by this priority:
+1. Architecture (layer violations, circular deps, god modules, shared mutable state)
+2. Performance (N+1, redundant fetching, missing pagination, missing caching)
+3. Design (missing patterns: Strategy, Builder, Facade, Rich Domain)
+4. Code Smell (God class, long methods, boolean flags, null returns, copy-paste)
+
+Secondary impacts go in the item's "Why it matters" description, not as a separate category.

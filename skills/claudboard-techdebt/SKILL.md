@@ -77,7 +77,7 @@ grep -rn 'switch\s*(' --include='*.java' src/main/ | grep -v 'test\|config\|Conf
 grep -rn 'instanceof' --include='*.java' src/main/ | grep -v test
 
 # Long if-else chains
-grep -c 'else if' --include='*.java' src/main/**/*.java 2>/dev/null | \
+find src/main -name '*.java' | xargs grep -c 'else if' 2>/dev/null | \
   grep -v ':0$' | sort -t: -k2 -rn | head -10
 
 # Sequential setters (>5 on same object)
@@ -137,9 +137,11 @@ From scan results, build ranked candidate list:
 2. **Read-if-budget**: God classes 300-500 LOC, switch 4-6 cases, sequential setters >5
 3. **Note-only**: long methods, boolean flags, magic numbers (capture from grep, no deep read needed)
 
+Typical counts: 5-15 read-now files, 10-25 read-if-budget files per project.
+
 ### 1e. Strategic File Reading
 
-Read all "read-now" candidates fully. Then read "read-if-budget" candidates. No hard file limit — this is a run-once tool. Prioritize thoroughness.
+Read all "read-now" candidates fully. Then read "read-if-budget" candidates until analysis is thorough. No hard file limit — this is a run-once tool, not a sampling exercise.
 
 For each file read:
 - Count methods and their line ranges
@@ -152,7 +154,7 @@ For each file read:
 
 ## Phase 2: Deep Analysis
 
-Load reference files on-demand per pass:
+Passes 1-4 can run in any order but all must complete before assigning IDs and detecting dependencies. Load reference files on-demand per pass:
 
 | Pass | Reference file |
 |------|---------------|
@@ -360,6 +362,24 @@ After user confirms, create:
 Use templates from `references/report-template.md`. Include YAML frontmatter on summary.md with `generated_at`, `repo`, `version`, `modules_scanned`, `total_items`.
 
 ---
+
+## Error Handling
+
+| Condition | Behavior |
+|-----------|----------|
+| Target path doesn't exist | Report error with path and stop |
+| No source files found (wrong directory) | Report "no source files found", suggest correct path, stop |
+| Grep command returns no results for a category | Continue with 0 candidates for that category — report "none detected" |
+| Existing analysis report is malformed/unreadable | Ignore it, run full Wide Scan (step 1b) as if no report exists |
+| User cancels during Phase 3 confirmation | Discard, exit cleanly — no files written |
+
+## Output Validation
+
+Before presenting the Phase 3 summary, verify:
+- All debt items have sequential IDs (TD-001, TD-002, ...)
+- No orphaned dependencies (if TD-X depends on TD-Y, TD-Y must exist)
+- Total items = sum across all categories
+- No duplicate items (same file + same pattern = one item, not two)
 
 ## Constraints
 

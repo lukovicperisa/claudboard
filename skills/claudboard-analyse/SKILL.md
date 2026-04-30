@@ -411,6 +411,15 @@ After saving, ask the user:
 
 ---
 
+## Error Handling
+
+| Condition | Behavior |
+|-----------|----------|
+| Target path doesn't exist | Report error with path and stop |
+| No source files found | Report "no source files found at [path]", suggest checking the path, stop |
+| Grep command returns no results | Continue — report "none detected" for that category |
+| Build file not recognized | Note "unrecognized project type" and proceed with structure-based analysis |
+
 ## Constraints
 
 - **Read-only for source code.** The only file written is `.claude/reports/claudboard-analysis.md`.
