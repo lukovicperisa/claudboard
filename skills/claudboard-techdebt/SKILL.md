@@ -186,7 +186,7 @@ For each code smell type, create debt items from scan results:
 - Copy-paste: identify repeated patterns, suggest extraction target
 - Broad catches: distinguish swallow vs wrap-rethrow
 
-Assign severity + effort from `references/severity-matrix.md`. Apply compound severity rules: when two findings co-occur (e.g., God class + no tests), escalate severity per the compound table in severity-matrix.md. See that file for the application algorithm.
+Assign severity + effort from `references/severity-matrix.md` (definitive source for all severity and effort scoring). Apply compound severity rules: when two findings co-occur (e.g., God class + no tests), escalate severity per the compound table and application algorithm in severity-matrix.md. Note: `../claudboard/references/pattern-catalog.md` also has compound rules for architectural context — severity-matrix.md takes precedence when values differ.
 
 ### Pass 2: Design Pattern Analysis
 
@@ -368,7 +368,7 @@ Use templates from `references/report-template.md`. Include YAML frontmatter on 
 | Condition | Behavior |
 |-----------|----------|
 | Target path doesn't exist | Report error with path and stop |
-| No source files found (wrong directory) | Report "no source files found", suggest correct path, stop |
+| No source files found | Report "no source files found at [path]", suggest checking the path, stop |
 | Grep command returns no results for a category | Continue with 0 candidates for that category — report "none detected" |
 | Existing analysis report is malformed/unreadable | Ignore it, run full Wide Scan (step 1b) as if no report exists |
 | User cancels during Phase 3 confirmation | Discard, exit cleanly — no files written |

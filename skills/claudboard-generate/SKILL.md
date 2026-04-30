@@ -172,9 +172,8 @@ If Claude stumbles on any of these, run `/refresh` to update the artifacts.
 
 ## Constraints
 
-- **Write only to `.claude/` and project-root CLAUDE.md.**
-- **Never modify source code, tests, or any existing file outside `.claude/`.**
-- **Merge, don't replace** — when artifacts exist, fill gaps only.
+- **Never modify source code** — only write to `.claude/` and project-root CLAUDE.md.
+- **Merge, don't replace** — when `.claude/` artifacts exist, append or update sections, never delete existing content.
 - **Secrets:** Never include secret values in generated artifacts.
 
 ## Reference Files

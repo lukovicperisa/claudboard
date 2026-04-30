@@ -20,9 +20,9 @@ Analyzes a repository and generates Claude Code artifacts that let you work on i
 
 ## Workflow
 
-Onboarding is a two-step process. Run each step separately for best results.
+Onboarding is a two-phase process. Run each phase separately for best results.
 
-### Step 1: Analyse
+### Phase 1: Analyse
 
 ```
 /analyse [path]
@@ -32,7 +32,7 @@ Scans the project (read-only), detects patterns, quality signals, and anti-patte
 
 At the end of analysis, you'll be asked whether to continue with generation or do it later.
 
-### Step 2: Generate
+### Phase 2: Generate
 
 ```
 /generate

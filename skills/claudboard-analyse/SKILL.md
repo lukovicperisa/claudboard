@@ -52,7 +52,7 @@ Skip: `node_modules/`, `.git/`, `dist/`, `build/`, `target/`, `__pycache__/`, `.
 
 **Skip if repo has <50 source files** — read all source files directly in step 1d instead.
 
-Run grep-based scans across the entire repo before reading any source file fully. See `../claudboard/references/stack-detectors.md` → "Wide Scan Grep Patterns" for exact commands per language.
+Run grep-based scans across the entire repo before reading any source file fully. See `../claudboard/references/stack-detectors.md` → "Wide Scan Grep Patterns" for exact commands per language. If any category returns 0 results, record "none detected" and continue with other categories.
 
 Run in parallel:
 
@@ -351,7 +351,13 @@ After listing all Watch findings, **apply compound severity rules** from `../cla
 
 Before listing skills, **run skill dedup check** (see `../claudboard/references/quality-signals.md` → "Skill Deduplication"):
 - Compare each pair of proposed skills for file glob overlap >50% or shared trigger annotations
-- If overlap found: list the pair and ask user to merge or keep separate before proceeding
+- If overlap found, present it explicitly:
+  ```
+  **Skill overlap detected:**
+  - `skill-a` and `skill-b` share: [overlapping globs or triggers]
+    → Merge into one skill or keep separate with distinct scopes?
+  ```
+- Wait for user decision before listing final skill set
 - Document decision in the skill descriptions
 
 [If no overlap or after user resolves overlap:]
@@ -404,10 +410,10 @@ Followed by the full analysis report content (same WHAT/HOW/WHY/CONCERNS structu
 
 After saving, ask the user:
 
-> Should I continue with artifact generation? (Recommended: run `/generate` in a fresh session for best results — the analysis phase fills context with discovery data that isn't needed during generation.)
+> Analysis saved. Would you like to generate artifacts now, or run `/generate` in a fresh session? (Fresh session recommended — analysis fills context with discovery data not needed during generation.)
 
-- If yes: tell the user "Starting generation. Note: for best results, run `/generate` in a fresh session — the analysis phase fills context with discovery data not needed for generation. Continue anyway?" If they still want to proceed, follow `../claudboard-generate/SKILL.md` steps.
-- If no: end with "Analysis saved to `.claude/reports/claudboard-analysis.md`. Run `/generate` in a fresh session when ready. For tech debt analysis, run `/techdebt`."
+- If user chooses to generate now: proceed with `../claudboard-generate/SKILL.md` steps starting from Phase 2 (skip Phase 1 report loading — you already have the data).
+- If user defers: end with "Analysis saved to `.claude/reports/claudboard-analysis.md`. Run `/generate` in a fresh session when ready. For tech debt analysis, run `/techdebt`."
 
 ---
 
