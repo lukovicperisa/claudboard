@@ -33,7 +33,9 @@ Look for `.claude/reports/claudboard-analysis.md` in the target project.
 **If found:**
 - Read the report
 - Check `generated_at` in frontmatter — if older than 24 hours, warn: "Analysis report is N days old. Consider running `/analyse` first for fresh results."
-- Display a summary of the Proposed Artifacts section
+- Validate structure: check that "Proposed Artifacts" section exists. If missing, tell user: "Analysis report is incomplete or malformed — missing 'Proposed Artifacts' section. Run `/analyse` again to regenerate." Stop here.
+- **Check for monorepo mode:** look for `claudboard-analysis-*.md` files alongside the global report. If found, read each per-service report. Validate each: if a per-service report is missing "Proposed Artifacts", warn "Service report for <name> is incomplete — skipping that service. Re-run `/analyse` to regenerate." and continue with remaining services.
+- Display a summary of the Proposed Artifacts section (global + per-service if monorepo)
 
 **If not found:**
 - Tell the user: "No analysis report found. Run `/analyse` first to scan the codebase, then `/generate` to create artifacts."
@@ -80,9 +82,28 @@ Load these references as needed:
 
 ### 3a. Generate or update CLAUDE.md
 
-Follow `../claudboard/references/claude-md-template.md` exactly. Target 60-120 lines.
+Follow `../claudboard/references/claude-md-template.md` exactly.
 
-**If CLAUDE.md exists:** Read it, add only gaps — new commands, new architecture notes, new rules/skills table entries, new critical rules. Do not rewrite.
+**Single-project:** Use the standard template. Target 60-120 lines.
+
+**Monorepo:** Use the monorepo variant template from `claude-md-template.md`. Target 80-150 lines. Include:
+- Services table (name, stack, directory, purpose)
+- Shared libraries table (name, directory, consumers)
+- Per-service build/test commands grouped by service
+- Global conventions (branch, commit, CI/CD)
+- Critical Rules section covering cross-service concerns
+
+**Workspace (multi-repo):** Generate CLAUDE.md per service repo (not at workspace level). For each service:
+- Use standard single-project template as base
+- Add **Ecosystem** section (task 6.8):
+  ```markdown
+  ## Ecosystem
+  
+  This service is part of [project/workspace name if detectable]. Cross-service dependencies and coupling analysis: `.claude/memories/ecosystem.md` (auto-loaded).
+  ```
+- Do not duplicate ecosystem.md content in CLAUDE.md — the memory file is auto-loaded by Claude Code
+
+**If CLAUDE.md exists:** Read it, add only gaps — new commands, new architecture notes, new rules/skills table entries, new critical rules, ecosystem reference (workspace mode). Do not rewrite.
 
 **If new:** Generate from scratch using detected values for every field.
 
@@ -96,6 +117,13 @@ For each rule to generate, follow `../claudboard/references/rule-templates.md` �
 - 4+ dimensions "Good" → full rules (80-120 lines) with real code examples from sampled files
 - 2-3 "Good" → medium rules (50-70 lines)
 - <2 "Good" → skeleton rules (30-50 lines) with TODO markers
+
+**Single-project:** Standard rules with `paths:` globs covering the whole codebase.
+
+**Monorepo:**
+- **Per-service rules:** `rules/<service-name>-conventions.md` with `paths: ["<service-dir>/**"]`. Use each service's own adaptive depth (from its per-service quality score). Use the service's directory name as-is for the filename.
+- **Global rules (no `paths:`):** `rules/ci-cd.md`, `rules/gitops.md`, etc. — for CI/CD, deployment, and cross-service conventions that apply everywhere.
+- If two services share identical conventions, they may share one rule file with multiple `paths:` entries: `paths: ["service-a/**", "service-b/**"]`.
 
 Write to: `<project>/.claude/rules/<name>.md`
 
@@ -111,6 +139,8 @@ For each skill, follow `../claudboard/references/skill-generation.md` → full-s
 - `scripts/scaffold.sh` if the skill creates 3+ boilerplate files with predictable naming
 
 **Adaptive depth:** Full for clean codebases, skeleton+ask for inconsistent patterns.
+
+**Monorepo:** If a skill is proposed from a per-service report, scope it to that service's directory. Reference only that service's conventions and code examples in the skill content.
 
 Write to: `<project>/.claude/skills/<name>/`
 

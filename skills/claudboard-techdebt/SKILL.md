@@ -32,20 +32,25 @@ Path defaults to current working directory.
 
 Check if `.claude/reports/claudboard-analysis.md` exists.
 
-**If exists:** Read it. Extract:
-- Anti-pattern findings (Watch section)
-- Quality scores
-- Architecture pattern
-- God class candidates
-- Tech debt indicators
+**If exists:** Read it. Check frontmatter for `monorepo: true` and `services:` list.
 
-Skip overlapping Wide Scan portions — go directly to debt-specific scans (step 1c).
+**Single-project report:** Extract anti-pattern findings, quality scores, architecture pattern, God class candidates, tech debt indicators. Reuse call-path tracing findings (Phase 1f) from the analysis for overlapping patterns — only perform additional call-path tracing for debt-specific patterns not covered by the analysis. Skip overlapping Wide Scan portions → go directly to step 1c.
 
-**If not exists:** Run full Wide Scan (step 1b).
+**Monorepo report:** Also check for per-service reports (`claudboard-analysis-<name>.md`). For each detected service:
+- Read its per-service report and extract the same fields
+- Reuse its call-path tracing findings where applicable
+- Set service scan scope to the service's directory for step 1c
+
+If per-service reports don't exist despite `monorepo: true` in the global report: auto-detect services using the same logic as analyse Phase 1a (see `../claudboard/references/stack-detectors.md` → "Monorepo Detection & Service Classification"). Present detected services and confirm before proceeding.
+
+**If not exists:** Run full Wide Scan (step 1b). If monorepo detected during Wide Scan (step 1b), follow the same per-service approach.
+
+**If no production source files found (test-only project):** Tell the user: "No production code detected in analysis. Tech debt scan targets production source — stopping cleanly." Exit without generating a report.
 
 ### 1b. Wide Scan (if no existing analysis)
 
-Load `../claudboard/references/stack-detectors.md` for grep patterns per language.
+Load `../claudboard/references/stack-detectors.md` for detection heuristics.
+Load the language-specific file from `../claudboard/references/` (e.g., `stack-detectors-java.md`, `stack-detectors-typescript.md`, etc.) for grep patterns per language.
 Load `../claudboard/references/pattern-catalog.md` for anti-pattern patterns.
 
 Run in parallel:
@@ -55,7 +60,9 @@ Run in parallel:
 
 ### 1c. Debt-Specific Scans (always run)
 
-These scans go beyond standard claudboard analysis. Run in parallel:
+These scans go beyond standard claudboard analysis. Run in parallel.
+
+**In monorepo mode:** run scans independently per service, scoping all grep/find commands to the service's directory. Repeat for each service.
 
 **God class deep scan:**
 ```bash
@@ -154,7 +161,9 @@ For each file read:
 
 ## Phase 2: Deep Analysis
 
-Passes 1-4 can run in any order but all must complete before assigning IDs and detecting dependencies. Load reference files on-demand per pass:
+**Load `references/severity-matrix.md` once at the start of Phase 2.** This is the single source of truth for all severity and effort scoring. Use the **Debt** column for techdebt analysis.
+
+Passes 1-4 can run in any order but all must complete before assigning IDs and detecting dependencies. Load catalog reference files on-demand per pass:
 
 | Pass | Reference file |
 |------|---------------|
@@ -162,7 +171,6 @@ Passes 1-4 can run in any order but all must complete before assigning IDs and d
 | Pass 2 | `references/design-debt-patterns.md` |
 | Pass 3 | `references/perf-debt-patterns.md` |
 | Pass 4 | `references/arch-debt-patterns.md` |
-| All | `references/severity-matrix.md` |
 
 ### Pass 1: Code Smells
 
@@ -186,7 +194,7 @@ For each code smell type, create debt items from scan results:
 - Copy-paste: identify repeated patterns, suggest extraction target
 - Broad catches: distinguish swallow vs wrap-rethrow
 
-Assign severity + effort from `references/severity-matrix.md` (definitive source for all severity and effort scoring). Apply compound severity rules: when two findings co-occur (e.g., God class + no tests), escalate severity per the compound table and application algorithm in severity-matrix.md. Note: `../claudboard/references/pattern-catalog.md` also has compound rules for architectural context — severity-matrix.md takes precedence when values differ.
+Assign severity + effort from `references/severity-matrix.md` (use the **Debt** column). Apply compound severity rules: when two findings co-occur (e.g., God class + no tests), escalate severity per the compound table and application algorithm in severity-matrix.md (techdebt-scoped compound rules). Pattern-catalog.md has separate compound rules for analyse-scoped analysis.
 
 ### Pass 2: Design Pattern Analysis
 
@@ -298,15 +306,24 @@ Create debt items. These go to `cross-cutting.md` unless they affect only one mo
 
 ### Assign IDs
 
-After all passes, assign sequential IDs: TD-001, TD-002, ...
-Order by: severity (CRITICAL first), then category (Architecture → Performance → Design → Code Smell).
+**Single-project:** assign sequential IDs: `TD-001`, `TD-002`, ...
+
+**Monorepo:** assign IDs with a service prefix. Derive prefix from service directory name:
+1. Use uppercase initials of hyphen-separated segments if unique across services (e.g., `order-service` → `OS`, `frontend` → `FE`, `user-service` → `US`)
+2. If initials collide, use first 3 chars of each segment (e.g., `order-api` → `ORA`, `order-worker` → `ORW`)
+3. Global/cross-cutting findings use prefix `GL`
+
+Examples: `OS-001`, `OS-002`, `FE-001`, `GL-001`
+
+Order by: severity (CRITICAL first), then category (Architecture → Performance → Design → Code Smell) within each service.
 
 ### Detect Dependencies
 
 Scan items for dependencies:
-- God class split enables unit testing → TD-X depends on TD-Y
+- God class split enables unit testing → `{prefix}-X` depends on `{prefix}-Y`
 - Interface extraction enables mocking → testing debt depends on abstraction debt
 - Layer fix requires service creation → layer violation fix may depend on God class split
+- **Cross-report dependencies (monorepo):** if a per-service item depends on a global item, note with the prefixed ID: `Depends on: GL-001`. This is valid — the `Depends on` field accepts any prefixed ID from any report.
 - Note dependencies on each item.
 
 ---
@@ -349,6 +366,7 @@ Ready to write report to .claude/reports/tech-debt/? (summary.md + modules/ + cr
 
 After user confirms, create:
 
+**Single-project:**
 ```
 .claude/reports/tech-debt/
 ├── summary.md              # Priority matrix, module table, top 5, dep chains
@@ -359,7 +377,22 @@ After user confirms, create:
 └── cross-cutting.md        # Architecture-level, cross-module items
 ```
 
-Use templates from `references/report-template.md`. Include YAML frontmatter on summary.md with `generated_at`, `repo`, `version`, `modules_scanned`, `total_items`.
+**Monorepo:**
+```
+.claude/reports/tech-debt/
+├── summary.md              # Global overview: per-service summary table, top 5 across all services
+├── services/
+│   ├── {service-name}/
+│   │   ├── modules/
+│   │   │   ├── {module-a}.md   # Debt items for module A within this service
+│   │   │   └── ...
+│   │   └── cross-cutting.md    # Items spanning modules within this service
+│   └── {other-service}/
+│       └── ...
+└── cross-cutting.md        # Repo-wide: infra debt, CI/CD debt, cross-service issues (GL-* IDs)
+```
+
+Use templates from `references/report-template.md`. Include YAML frontmatter on summary.md with `generated_at`, `repo`, `version`, `modules_scanned`, `total_items`. For monorepos, also include `monorepo: true` and `services: [<dir-name>, ...]`.
 
 ---
 
@@ -394,7 +427,8 @@ Before presenting the Phase 3 summary, verify:
 
 | File | When to load |
 |------|-------------|
-| `../claudboard/references/stack-detectors.md` | Phase 1b — Wide Scan patterns (if no existing analysis) |
+| `../claudboard/references/stack-detectors.md` | Phase 1b — shared detection heuristics (if no existing analysis) |
+| `../claudboard/references/stack-detectors-{lang}.md` | Phase 1b — language-specific Wide Scan patterns (if no existing analysis) |
 | `../claudboard/references/pattern-catalog.md` | Phase 1b — anti-pattern grep patterns (if no existing analysis) |
 | `references/code-smell-catalog.md` | Phase 2 Pass 1 |
 | `references/design-debt-patterns.md` | Phase 2 Pass 2 |

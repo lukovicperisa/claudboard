@@ -201,17 +201,357 @@ Read these in parallel. Each file is a detection signal — the more that match,
 
 ---
 
-## Monorepo Boundary Detection
+## Right-Level Check
 
-Run this check during structure mapping:
+**Run this check FIRST**, before monorepo detection or any other scanning. Prevents analysing a microservice in isolation when it's part of a larger ecosystem.
 
-1. Count `package.json` / `pom.xml` / `build.gradle` files at depth 1-2
-2. If >1 independent build file found:
-   - Look for containing dir: `services/`, `packages/`, `apps/`, `modules/`, `libs/`
-   - If containing dir found → **monorepo with service boundary**
-   - If `workspaces` in root `package.json` → **npm workspace monorepo**
-   - If `settings.gradle` has `include()` → **Gradle multi-module**
-3. For monorepos: analyze shared infra first, then sample 2-3 representative services — NOT all services
+### Detection Algorithm
+
+Scan the parent directory (`../`) for sibling directories containing any build file:
+- `build.gradle`, `build.gradle.kts`
+- `pom.xml`
+- `package.json`
+- `go.mod`
+- `pyproject.toml`
+- `Cargo.toml`
+- `*.csproj`
+
+**If N ≥ 2 sibling service directories found:**
+
+1. Detect the stack for each sibling (same stack detection signals as below)
+2. Present step-up prompt to user:
+   ```
+   This looks like a microservice within a larger system.
+   
+   Found sibling services at [parent-dir]:
+   • user-service (Java/Spring Boot)
+   • frontend (React/TypeScript)
+   • notification-service (Java/Spring Boot)
+   
+   Analyse at ecosystem level for cross-service dependency mapping? [y/n]
+   ```
+
+3. Wait for user response:
+   - **YES** → re-run analysis from the parent directory (workspace or monorepo detection will trigger)
+   - **NO** → proceed with analysis at current directory without further checks
+
+**Skip this check if:**
+- CWD has no build file (already at workspace/monorepo root — will trigger later detection)
+- Parent directory has fewer than 2 other build-file directories (this is a monolith or standalone service)
+
+**Stack detection for sibling display:**
+
+Use build file presence to infer stack:
+- `build.gradle`/`pom.xml` → "Java" (check dependencies for "/Spring Boot" suffix if present)
+- `package.json` → "Node.js" (check for `react`/`next`/`vue`/`@angular/core` in dependencies → "React", "Next.js", "Vue", "Angular")
+- `go.mod` → "Go"
+- `pyproject.toml`/`requirements.txt` → "Python"
+- `Cargo.toml` → "Rust"
+- `*.csproj` → ".NET"
+- Unknown → "(unknown stack)"
+
+---
+
+## Monorepo Detection & Service Classification
+
+Run this check after the Right-Level Check passes (user declined step-up or no siblings found).
+
+### Step 1: Find independent build roots
+
+```bash
+# Find build files at depth 1-3, excluding dependency dirs
+find . -maxdepth 3 \( \
+  -name 'build.gradle' -o -name 'build.gradle.kts' \
+  -o -name 'pom.xml' \
+  -o -name 'package.json' \
+  -o -name 'go.mod' \
+  -o -name 'pyproject.toml' \
+  -o -name 'Cargo.toml' \
+  -o -name '*.csproj' \
+\) \
+  ! -path '*/node_modules/*' \
+  ! -path '*/.venv/*' \
+  ! -path '*/vendor/*' \
+  ! -path '*/.gradle/*' \
+  ! -path '*/target/*' \
+  ! -path '*/dist/*' \
+  ! -path '*/build/*'
+```
+
+- **1 result:** Single-project repo — proceed with standard single-project flow.
+- **2+ results:** Potential monorepo — proceed to Step 2.
+
+### Step 2: Classify each build root as service or library
+
+For each build root, check these signals:
+
+| Signal | Service | Library |
+|--------|---------|---------|
+| `Dockerfile` present in directory | ✓ Strong | ✗ |
+| Main entry point (see table below) | ✓ Strong | ✗ |
+| Runtime config (`application.yml`, `.env`, `config.yaml`) | ✓ Supporting | ✗ |
+| Publish task configured (see table below) | ✗ | ✓ Strong |
+| No Dockerfile AND no main entry point | ✗ | ✓ Supporting |
+
+**Main entry point signals by stack:**
+
+| Stack | Service signal | Library signal |
+|-------|---------------|----------------|
+| Java/Kotlin | `@SpringBootApplication`, `public static void main(` | `maven-publish` plugin, `publishing {` block |
+| Node/TS | `"start"` script in package.json | `"publishConfig"` or `"files"` in package.json |
+| Python | `__main__.py` or `if __name__ == "__main__":` | `[build-system]` in pyproject.toml, `setup.py` |
+| Go | `package main` + `func main()` | Package declares only library types (no `package main`) |
+| Rust | `[[bin]]` in Cargo.toml or `src/main.rs` | `[lib]` in Cargo.toml, no `src/main.rs` |
+| .NET | Entry point class with `Main()`, `Program.cs` | `<IsPackable>true</IsPackable>` in .csproj |
+
+**Classification rule:**
+- ANY service signal → classify as **service**
+- ALL library signals (publish task + no main + no Dockerfile) → classify as **library**
+- Ambiguous → classify as **service** (default to full analysis)
+
+### Step 3: Handle edge cases
+
+**Gradle/Maven multi-module with shared build root:**
+- Signal: single `settings.gradle` with `include(...)` or root `pom.xml` with `<modules>`
+- BUT: per-module `Dockerfile` files exist
+- Action: ask user: "This looks like a multi-module project with per-module deployments. Treat as monorepo with N services, or as a single project?"
+
+**Shared infrastructure directories** (not services or libraries):
+- `infra/`, `env/`, `deploy/`, `charts/`, `helm/`, `terraform/`, `k8s/` — exclude from service list
+- `common/`, `shared/`, `core/` without main entry point → check for publish task → library if present, otherwise shared utilities (exclude from service list)
+
+### Step 4: Present topology before proceeding
+
+After classification, present to user:
+
+```
+Found N services + M libraries:
+
+Services:
+  • order-service/     (Java/Spring Boot)
+  • user-service/      (Java/Spring Boot)
+  • frontend/          (React/TypeScript)
+
+Libraries:
+  • libraries/craftsphere.core/   (Java, maven-publish)
+
+Proceeding with full analysis of each service.
+```
+
+Wait for user to confirm or correct misclassifications before proceeding.
+
+---
+
+## Service Identity Resolution
+
+**Applies to: workspace mode (multi-repo) and cross-service dependency graph construction.**
+
+When building the dependency graph, each repo needs a canonical identity to match outbound references (FeignClient names, topic names) against inbound surfaces.
+
+### Resolution Order
+
+1. **Primary: `spring.application.name`**
+   - Read from `application.yml` or `application.properties` at any depth in the repo
+   - If found, use this value as the service identity (e.g., `"user-service"`)
+   - Common location: `src/main/resources/application.yml`
+
+2. **Fallback: directory name**
+   - If no `spring.application.name` found, use the directory name as-is (e.g., `order-service/` → `"order-service"`)
+
+3. **Supplementary signals** (use if both primary and fallback are absent or ambiguous):
+   - Kubernetes service manifest: `metadata.name` in `k8s/*.yaml` or `helm/templates/service.yaml`
+   - Docker Compose service name: service key in `docker-compose.yml`
+   - Note: These are supporting signals, not primary — they may not exist or may differ from runtime identity
+
+### Extraction Command
+
+```bash
+# Spring application.name (YAML)
+grep -r 'spring.application.name' --include='application.yml' --include='application.yaml' .
+
+# Spring application.name (properties)
+grep -r 'spring.application.name' --include='application.properties' .
+
+# Kubernetes service name
+grep -r 'metadata:' -A 5 --include='service.yaml' k8s/ helm/ | grep 'name:'
+
+# Docker Compose
+grep -A 1 'services:' docker-compose.yml
+```
+
+### Identity Matching Rules
+
+When matching outbound references to repo identities:
+- **REST (FeignClient):** `@FeignClient(name = "user-service")` → matches repo with identity `"user-service"`
+- **REST (URL-based):** `RestTemplate` URL containing `/user-service/` → matches repo with identity `"user-service"`
+- **Kafka/Solace:** topic names are matched exactly (see Cross-Service Surface Detection below)
+
+---
+
+## Cross-Service Surface Detection
+
+**Applies to: workspace mode (multi-repo) only.** Runs during per-repo analysis (Phase 1b) to extract each repo's communication surface.
+
+These patterns are used to build the cross-service dependency graph (Phase 1c).
+
+### Outbound REST Surface
+
+**What this repo calls:**
+
+| Stack | Pattern | Grep Command | What to Extract |
+|-------|---------|--------------|-----------------|
+| Java/Spring | `@FeignClient` | `grep -rn '@FeignClient' --include='*.java' src/` | `name = "..."` or `url = "..."` value |
+| Java/Spring | `RestTemplate` | `grep -rn 'RestTemplate' --include='*.java' src/` | URL patterns in `.getForObject()`, `.postForEntity()` etc. |
+| Java/Spring | `WebClient` | `grep -rn 'WebClient' --include='*.java' src/` | `.baseUrl("...")` values |
+| TypeScript | Axios | `grep -rn 'axios\.' --include='*.ts' src/` | URL patterns containing service names |
+| TypeScript | fetch | `grep -rn 'fetch(' --include='*.ts' src/` | URL patterns containing service names |
+
+**Extraction example (FeignClient):**
+```java
+@FeignClient(name = "user-service")
+public interface UserServiceClient { ... }
+```
+→ Record: `outbound_rest: "user-service"`
+
+**Extraction example (RestTemplate URL):**
+```java
+restTemplate.getForObject("http://order-service/api/orders", ...)
+```
+→ Record: `outbound_rest: "order-service"`
+
+### Inbound REST Surface
+
+**What this repo exposes:**
+
+| Stack | Pattern | Grep Command | What to Extract |
+|-------|---------|--------------|-----------------|
+| Java/Spring | `@RestController` | `grep -rn '@RestController' --include='*.java' src/` | Endpoint paths from `@RequestMapping`, `@GetMapping`, etc. |
+| Java/Spring | Service identity | See "Service Identity Resolution" above | The canonical name of this service |
+
+**Extraction example:**
+```java
+@RestController
+@RequestMapping("/api/users")
+public class UserController { ... }
+```
+→ Record: `inbound_rest: ["/api/users"]` + service identity: `"user-service"`
+
+### Outbound Kafka Surface
+
+**Topics this repo publishes to:**
+
+| Pattern | Grep Command | What to Extract |
+|---------|--------------|-----------------|
+| `KafkaTemplate.send` | `grep -rn 'KafkaTemplate.*\.send(' --include='*.java' src/` | Topic name literal (first argument) |
+| `@SendTo` | `grep -rn '@SendTo' --include='*.java' src/` | Annotation value |
+
+**Extraction example:**
+```java
+kafkaTemplate.send("order.created", message);
+```
+→ Record: `outbound_kafka: ["order.created"]`
+
+### Inbound Kafka Surface
+
+**Topics this repo consumes:**
+
+| Pattern | Grep Command | What to Extract |
+|---------|--------------|-----------------|
+| `@KafkaListener` | `grep -rn '@KafkaListener' --include='*.java' src/` | `topics = {"..."}` value |
+
+**Extraction example:**
+```java
+@KafkaListener(topics = "order.created")
+public void handleOrderCreated(...) { ... }
+```
+→ Record: `inbound_kafka: ["order.created"]`
+
+### Outbound Solace Spring Cloud Stream Surface
+
+**Topics this repo publishes to (config-based):**
+
+| File | Pattern | What to Extract |
+|------|---------|-----------------|
+| `application.yml` | `spring.cloud.stream.bindings.{channel}.destination` | Destination value for each `@Output` channel |
+| Java code | `@Output("channelName")` or `StreamBridge` | Link config destination to producer channel |
+
+**Extraction example (application.yml):**
+```yaml
+spring:
+  cloud:
+    stream:
+      bindings:
+        orderOut:
+          destination: order/created
+```
+→ Record: `outbound_solace_scs: ["order/created"]`
+
+### Inbound Solace Spring Cloud Stream Surface
+
+**Topics this repo consumes (annotation-based):**
+
+| Pattern | Grep Command | What to Extract |
+|---------|--------------|-----------------|
+| `@StreamListener` | `grep -rn '@StreamListener' --include='*.java' src/` | Binding destination from config (linked via channel name) |
+
+**Extraction example:**
+```java
+@StreamListener("orderIn")
+public void handleOrder(...) { ... }
+```
+→ Look up `spring.cloud.stream.bindings.orderIn.destination` in config → Record: `inbound_solace_scs: ["order/created"]`
+
+### Outbound Solace JCSMP Surface
+
+**Topics this repo publishes to (code literals):**
+
+| Pattern | Grep Command | What to Extract |
+|---------|--------------|-----------------|
+| `Topic.of("...")` | `grep -rn 'Topic\.of(' --include='*.java' src/` | Literal topic name |
+| `Queue.get("...")` | `grep -rn 'Queue\.get(' --include='*.java' src/` | Literal queue name |
+
+**When topic is a constant:**
+```java
+private static final String TOPIC = "order/created";
+...
+producer.send(Topic.of(TOPIC), message);
+```
+→ Grep for the constant definition:
+```bash
+grep -rn 'static final String TOPIC' --include='*.java' src/
+```
+→ Resolve the literal value from the constant declaration
+
+**Note unresolved constants:** If a topic reference uses a constant that cannot be resolved, record: `outbound_solace_jcsmp: ["<unresolved: TOPIC_NAME>"]`
+
+### Inbound Solace JCSMP Surface
+
+**Topics this repo subscribes to:**
+
+| Pattern | Grep Command | What to Extract |
+|---------|--------------|-----------------|
+| `XMLMessageConsumer.addSubscription(Topic.of("..."))` | `grep -rn 'addSubscription' --include='*.java' src/` | Topic literal from `Topic.of(...)` |
+
+**Extraction example:**
+```java
+consumer.addSubscription(Topic.of("order/created"));
+```
+→ Record: `inbound_solace_jcsmp: ["order/created"]`
+
+### Surface Extraction Summary
+
+For each repo in workspace mode, record:
+- **Service identity:** resolved name (see Service Identity Resolution)
+- **Outbound REST:** list of target service names or URLs
+- **Inbound REST:** list of exposed endpoint paths
+- **Outbound Kafka:** list of published topic names
+- **Inbound Kafka:** list of consumed topic names
+- **Outbound Solace SCS:** list of published destinations (from config)
+- **Inbound Solace SCS:** list of consumed destinations (from config)
+- **Outbound Solace JCSMP:** list of published topics/queues (from code literals, note unresolved constants)
+- **Inbound Solace JCSMP:** list of subscribed topics (from code literals)
+
+This surface data is used in Phase 1c (graph construction) to match dependencies across repos.
 
 ---
 
@@ -228,246 +568,27 @@ Source files = non-config code files (`.java`, `.ts`, `.py`, `.go`, etc.). Exclu
 
 ---
 
-## Wide Scan Grep Patterns
+## Language-Specific Wide Scan Patterns
 
-Run during Phase 1 step 1c. All greps exclude build output dirs. Run in parallel.
+For Wide Scan anti-patterns, conventions, security, observability, API surface, and dependencies, load the language-specific file:
 
-### Java / Kotlin
+| Language | File to load |
+|----------|-------------|
+| Java / Kotlin | `stack-detectors-java.md` |
+| TypeScript / JavaScript | `stack-detectors-typescript.md` |
+| Python | `stack-detectors-python.md` |
+| Go | `stack-detectors-go.md` |
+| Rust | `stack-detectors-rust.md` |
+| .NET / C# | `stack-detectors-dotnet.md` |
 
-**Custom patterns (inheritance & annotations):**
-```bash
-# Custom annotation declarations
-grep -rn '@interface' --include='*.java' --include='*.kt' src/
-
-# Abstract base classes
-grep -rn '^public abstract class\|^abstract class' --include='*.java' src/
-
-# Inheritance usage (exclude comments and tests)
-grep -rn ' extends ' --include='*.java' src/main/ | grep -v '//'
-
-# Interface implementations
-grep -rn ' implements ' --include='*.java' src/main/ | grep -v '//'
-```
-
-**Anti-pattern signals:**
-```bash
-# God class candidates (files >300 LOC in main source)
-find . -name '*.java' -path '*/src/main/*' ! -path '*/test/*' \
-  | xargs wc -l 2>/dev/null | sort -rn | head -20
-
-# Field injection count
-grep -rc '@Autowired' --include='*.java' src/main/ | awk -F: '{s+=$2}END{print s}'
-
-# Constructor injection indicator
-grep -rc 'private final' --include='*.java' src/main/ | awk -F: '{s+=$2}END{print s}'
-
-# Broad exception catching
-grep -rn 'catch (Exception\|catch (Throwable' --include='*.java' src/main/
-
-# Null returns
-grep -rn 'return null;' --include='*.java' src/main/
-
-# Reflection in business logic
-grep -rn 'ReflectionUtils\|getDeclaredField\|setAccessible(true)\|Method\.invoke\|ParameterizedType' \
-  --include='*.java' src/main/
-
-# Legacy java.util.Date usage
-grep -rl 'import java\.util\.Date' --include='*.java' src/main/
-
-# Console logging (production code only)
-grep -rn 'System\.out\.print\|System\.err\.print' --include='*.java' src/main/
-
-# Star imports
-grep -rn 'import .*\.\*;' --include='*.java' src/main/
-
-# TODO/FIXME/HACK count
-grep -rc 'TODO\|FIXME\|HACK' --include='*.java' src/main/ | grep -v ':0$'
-```
-
-**Convention frequency:**
-```bash
-# Logging style: @Slf4j vs LoggerFactory
-SLF4J_ANNOT=$(grep -rl '@Slf4j' --include='*.java' src/ | wc -l)
-SLF4J_FACTORY=$(grep -rl 'LoggerFactory.getLogger' --include='*.java' src/ | wc -l)
-# Report: "@Slf4j (N files) vs LoggerFactory (M files)"
-
-# Test naming pattern
-find src/test -name '*Test.java' -o -name '*Spec.groovy' -o -name '*IT.java' 2>/dev/null | head -5
-```
-
-**Security posture signals:**
-```bash
-# Spring Security framework
-grep -rl 'SecurityFilterChain\|@EnableMethodSecurity\|@EnableWebSecurity' \
-  --include='*.java' src/main/
-
-# Method-level auth annotations
-grep -rn '@PreAuthorize\|@Secured\|@RolesAllowed' --include='*.java' src/main/
-
-# Custom auth annotations (detect name, then count usage)
-# Step 1: find custom @interface annotations with auth-related names
-grep -rn '@interface.*[Aa]uthor\|@interface.*[Aa]uth\|@interface.*[Ss]ecur' \
-  --include='*.java' src/main/
-# Step 2: for each found annotation (e.g. @Authorize), count usage on controller methods
-grep -rn '@Authorize\|@RequiresAuth' --include='*.java' src/main/ | wc -l
-
-# Auth filters (custom OncePerRequestFilter implementations)
-grep -rn 'extends OncePerRequestFilter\|implements Filter' --include='*.java' src/main/
-
-# CORS configuration
-grep -rl 'CorsConfigurationSource\|@CrossOrigin\|addCorsMappings\|CorsConfiguration' \
-  --include='*.java' src/main/
-
-# Endpoint count vs auth-annotated endpoint count (coverage gap detection)
-TOTAL_ENDPOINTS=$(grep -rc '@GetMapping\|@PostMapping\|@PutMapping\|@DeleteMapping\|@PatchMapping\|@RequestMapping' \
-  --include='*.java' src/main/ | awk -F: '{s+=$2}END{print s}')
-AUTH_ENDPOINTS=$(grep -rc '@PreAuthorize\|@Secured\|@Authorize\|@RolesAllowed' \
-  --include='*.java' src/main/ | awk -F: '{s+=$2}END{print s}')
-# If AUTH_ENDPOINTS < TOTAL_ENDPOINTS: flag potential unprotected routes
-```
-
-**API surface signals:**
-```bash
-# Endpoint tally by HTTP method
-GET_COUNT=$(grep -rc '@GetMapping' --include='*.java' src/main/ | awk -F: '{s+=$2}END{print s}')
-POST_COUNT=$(grep -rc '@PostMapping' --include='*.java' src/main/ | awk -F: '{s+=$2}END{print s}')
-PUT_COUNT=$(grep -rc '@PutMapping' --include='*.java' src/main/ | awk -F: '{s+=$2}END{print s}')
-DELETE_COUNT=$(grep -rc '@DeleteMapping' --include='*.java' src/main/ | awk -F: '{s+=$2}END{print s}')
-PATCH_COUNT=$(grep -rc '@PatchMapping' --include='*.java' src/main/ | awk -F: '{s+=$2}END{print s}')
-# Report: "GET:N POST:M PUT:P DELETE:Q PATCH:R  total: N+M+P+Q+R endpoints"
-
-# API versioning (URL-based)
-grep -rn '@RequestMapping.*v[0-9]\|@GetMapping.*v[0-9]\|@PostMapping.*v[0-9]' \
-  --include='*.java' src/main/ | grep -oP '/v\d+/' | sort -u
-# If versions found: report "URL-based versioning: v1, v2..." else "No versioning detected"
-
-# OpenAPI / Swagger documentation tooling (check deps, not source)
-# Look in build.gradle or pom.xml (handled in dep detection step):
-grep -r 'springdoc\|springfox\|swagger' build.gradle settings.gradle pom.xml 2>/dev/null | head -5
-```
-
-**Observability signals:**
-```bash
-# Spring Actuator
-grep -r 'spring-boot-starter-actuator' build.gradle pom.xml 2>/dev/null
-
-# Micrometer metrics
-grep -r 'micrometer-core\|micrometer-registry' build.gradle pom.xml 2>/dev/null
-grep -rn '@Timed\|MeterRegistry' --include='*.java' src/main/ | wc -l
-
-# Distributed tracing
-grep -r 'micrometer-tracing\|spring-cloud-sleuth\|io\.opentelemetry\|opentelemetry-api' \
-  build.gradle pom.xml 2>/dev/null
-
-# Structured logging
-grep -r 'logstash-logback-encoder\|logback-json' build.gradle pom.xml 2>/dev/null
-grep -rn 'net\.logstash\.logback' --include='*.java' --include='*.xml' src/ 2>/dev/null | wc -l
-
-# Actuator endpoint config
-grep -rn 'management\.endpoints\|management\.endpoint' \
-  src/main/resources/application*.yml src/main/resources/application*.properties 2>/dev/null | head -5
-```
-
-**Dependency deep-scan signals:**
-```bash
-# BOM usage (Gradle)
-grep -rn 'platform(\|enforcedPlatform(' --include='*.gradle' --include='*.kts' .
-
-# BOM usage (Maven)
-grep -rn '<type>pom</type>' pom.xml 2>/dev/null
-
-# Dependency conflict resolution (Gradle)
-grep -rn 'resolutionStrategy\|force =\|forceVersion' --include='*.gradle' --include='*.kts' .
-# Dependency exclusions (Maven)
-grep -c '<exclusion>' pom.xml 2>/dev/null
-
-# SBOM generation
-grep -r 'cyclonedx\|spdx\|sbom' build.gradle pom.xml azure-pipelines.yml .github/workflows/*.yml 2>/dev/null
-
-# Cross-module version mismatch (multi-module Gradle projects)
-# After detecting multi-module, compare same dep version across included build files:
-grep -rn 'testcontainers\|spring-boot\|mapstruct' \
-  --include='*.gradle' --include='*.kts' --include='*.toml' . \
-  | grep -v '.gradle/\|build/' | sort
-# If same artifact appears at different versions across modules: flag MEDIUM severity
-```
-
----
-
-### TypeScript / JavaScript
-
-**Custom patterns:**
-```bash
-# Abstract classes and inheritance
-grep -rn 'abstract class\| extends ' --include='*.ts' src/ | grep -v node_modules | grep -v '//'
-
-# Interface declarations
-grep -rn '^export interface\|^interface ' --include='*.ts' src/
-
-# Type declarations
-grep -rn '^export type ' --include='*.ts' src/
-```
-
-**Anti-pattern signals:**
-```bash
-# God component/class candidates
-find . -name '*.ts' -o -name '*.tsx' | grep -v node_modules | grep -v dist \
-  | xargs wc -l 2>/dev/null | sort -rn | head -20
-
-# TypeScript `any` usage
-grep -rn '\bany\b\| as any\b\|// @ts-ignore\|// @ts-nocheck' \
-  --include='*.ts' --include='*.tsx' src/ | grep -v node_modules
-
-# Console.log in production (not test files)
-grep -rn '\bconsole\.log\b' --include='*.ts' --include='*.tsx' src/ \
-  --exclude-dir=test --exclude-dir=__tests__ --exclude-dir=spec
-```
-
-**Convention frequency:**
-```bash
-# Naming: PascalCase components vs lowercase files
-find src -name '*.tsx' | head -20  # Check naming pattern in output
-
-# Import style: absolute (tsconfig paths) vs relative
-grep -rn "from '\.\." --include='*.ts' --include='*.tsx' src/ | wc -l  # relative
-grep -rn "from '@/" --include='*.ts' --include='*.tsx' src/ | wc -l    # alias-based
-```
-
----
-
-### Python
-
-**Custom patterns:**
-```bash
-# Abstract base classes and protocols
-grep -rn 'class.*ABC\|class.*Protocol\|class.*BaseModel\|@abstractmethod' --include='*.py' src/
-
-# Class inheritance
-grep -rn '^class.*(' --include='*.py' src/ | grep -v '():\|object):'  # non-trivial inheritance
-```
-
-**Anti-pattern signals:**
-```bash
-# God class candidates
-find . -name '*.py' ! -path '*/.venv/*' ! -path '*/test*' \
-  | xargs wc -l 2>/dev/null | sort -rn | head -20
-
-# Broad exception catching
-grep -rn 'except Exception\|except:\|bare except' --include='*.py' src/
-
-# Type ignore
-grep -rn '# type: ignore\|# noqa' --include='*.py' src/
-
-# TODO/FIXME/HACK
-grep -rc 'TODO\|FIXME\|HACK' --include='*.py' src/ | grep -v ':0$'
-```
-
-**Convention frequency:**
-```bash
-# Type hints presence
-grep -rl 'def .*->.*:' --include='*.py' src/ | wc -l  # functions with return types
-grep -rl 'def ' --include='*.py' src/ | wc -l  # total function files
-```
+Each language-specific file contains 7 categories:
+1. Custom pattern detection
+2. Anti-pattern inventory
+3. Convention detection
+4. Security pattern detection
+5. API surface detection
+6. Observability pattern detection
+7. Dependency health checks
 
 ---
 

@@ -26,9 +26,103 @@ Path defaults to the current working directory. Works on any language/framework.
 
 ## Phase 1: Discovery
 
-Load `../claudboard/references/stack-detectors.md` first — it lists which files to check and what to extract per language.
+Load `../claudboard/references/stack-detectors.md` first — it lists which files to check and what to extract per language. For Wide Scan patterns, load the language-specific file: `stack-detectors-java.md`, `stack-detectors-typescript.md`, `stack-detectors-python.md`, `stack-detectors-go.md`, `stack-detectors-rust.md`, or `stack-detectors-dotnet.md`.
 
-### 1a. Parallel file detection
+### 1a. Right-level check, workspace/monorepo detection, & service classification
+
+**Step 0: Right-level check** — run FIRST, before any other detection.
+
+Follow `../claudboard/references/stack-detectors.md` → "Right-Level Check":
+
+1. Check if CWD has a build file AND parent directory (`../`) contains N≥2 sibling directories with build files
+2. If siblings found:
+   - Detect stack for each sibling (use build file signals from stack-detectors.md)
+   - Present step-up prompt with sibling list and detected stacks:
+     ```
+     This looks like a microservice within a larger system.
+     
+     Found sibling services at [parent-dir]:
+     • user-service (Java/Spring Boot)
+     • frontend (React/TypeScript)
+     
+     Analyse at ecosystem level for cross-service dependency mapping? [y/n]
+     ```
+   - Wait for user response:
+     - **YES** → re-run analysis from parent directory (proceed to Step 1 from there)
+     - **NO** → proceed with analysis at CWD, skip to Step 1
+
+3. **Skip right-level check if:**
+   - CWD has no build file (already at workspace/monorepo root)
+   - Parent has <2 other build-file directories
+
+**Step 1: Monorepo or workspace detection**
+
+Follow `../claudboard/references/stack-detectors.md` → "Monorepo Detection & Service Classification":
+
+1. Find all independent build roots at depth 1-3 (excluding dependency dirs):
+   ```bash
+   find . -maxdepth 3 \( \
+     -name 'build.gradle' -o -name 'build.gradle.kts' \
+     -o -name 'pom.xml' -o -name 'package.json' \
+     -o -name 'go.mod' -o -name 'pyproject.toml' \
+     -o -name 'Cargo.toml' -o -name '*.csproj' \
+   \) ! -path '*/node_modules/*' ! -path '*/.venv/*' ! -path '*/vendor/*' \
+      ! -path '*/.gradle/*' ! -path '*/target/*' ! -path '*/dist/*' ! -path '*/build/*'
+   ```
+
+2. **If 1 build root found:** Single-project repo. Skip to Phase 1b and proceed with standard single-project flow.
+
+3. **If 2+ build roots found:** Check for `.git/` in each build root directory:
+   - **All build-root dirs have `.git/`** → **Workspace mode** (multi-repo)
+   - **No build-root dirs have `.git/` (only at repo root)** → **Monorepo mode**
+   - **Mixed** (some with `.git/`, some without) → build-root dirs WITH `.git/` are independent repos; dirs WITHOUT `.git/` are treated as shared libraries/infra and excluded from service list
+
+4. **If no build files found anywhere:** Report error: "No projects found at [path]. Check the path and try again." Stop.
+
+**Step 2: Service vs library classification** (monorepo and workspace modes)
+
+For each build root (monorepo services or workspace repos):
+
+1. Classify as **service** or **library** using per-stack signals from `../claudboard/references/stack-detectors.md` → "Service Classification":
+   - Service signals: `Dockerfile`, main entry point, runtime config
+   - Library signals: publish task configured, no main entry point, no Dockerfile
+   - Ambiguous → default to **service** (full analysis)
+
+2. **Exclude** infrastructure directories from service list:
+   - `infra/`, `env/`, `deploy/`, `charts/`, `helm/`, `terraform/`, `k8s/`
+   - `common/`, `shared/`, `core/` without main entry point → check for publish task → library if present, otherwise exclude
+
+**Step 3: Topology presentation**
+
+Present detected topology to user and wait for confirmation:
+
+```
+Found N repos: [services list] + [libraries list]. Running full analysis of each service.
+
+Services:
+  • order-service/     (Java/Spring Boot)
+  • user-service/      (Java/Spring Boot)
+  • frontend/          (React/TypeScript)
+
+Libraries:
+  • libraries/shared-core/   (Java, maven-publish)
+
+Proceeding with full analysis of each service.
+```
+
+Wait for user to confirm or correct misclassifications before proceeding.
+
+**Flow Summary:**
+
+- **Single-project:** Phases 1b-1h run once for the whole repo.
+- **Monorepo:** Phase 1b runs once (global scope), then Phases 1c-1h run once per service.
+- **Workspace:** Phase 1b runs once per repo (no global scope), then new Phase 1c (graph construction) and Phase 1d (ecosystem injection) run once after all repos analyzed.
+
+### 1b. Global scan (runs once for both single-project and monorepo)
+
+**For single-project repos:** Standard parallel file detection for the whole repo.
+
+**For monorepos:** Run only the global-scope detection here. Per-service detection happens in Phases 1c-1h.
 
 In a single pass, check for all of the following in parallel:
 
@@ -42,17 +136,51 @@ In a single pass, check for all of the following in parallel:
 
 **Documentation:** `README.md`, `README`, `docs/adr/`, `ADR/`
 
-### 1b. Structure mapping
+**For monorepos, also extract globally:**
+- Cross-service communication: shared event topics (Kafka, RabbitMQ), REST contract files (OpenAPI specs, Feign clients), shared proto definitions
+- Shared library inventory: what each library exposes (from its build file / README)
+- Branch strategy and commit conventions: from root README, `.git/config`, CI pipeline naming patterns
+- Top-level directory structure (annotate each dir as service / library / infra / docs)
 
-List top-level directories (annotate each). Detect monorepo: look for multiple independent build files at depth 1-2, or `services/`, `packages/`, `apps/` containing sub-projects with their own build configs. See `../claudboard/references/stack-detectors.md` → "Monorepo Boundary Detection".
+**For workspace mode, additionally extract per repo:**
+
+Before running Phases 1c-1h for each repo, extract:
+
+1. **Service identity** (task 3.3):
+   - Follow `../claudboard/references/stack-detectors.md` → "Service Identity Resolution"
+   - Primary: `spring.application.name` from `application.yml` or `application.properties`
+   - Fallback: directory name
+   - Record the resolved identity for graph construction
+
+2. **Communication surface** (task 4.9):
+   - Follow `../claudboard/references/stack-detectors.md` → "Cross-Service Surface Detection"
+   - **Outbound REST:** `@FeignClient` names, `RestTemplate`/`WebClient` URLs, Axios/fetch URLs with service names
+   - **Inbound REST:** `@RestController` paths, service identity
+   - **Outbound Kafka:** `KafkaTemplate.send` topic literals, `@SendTo` values
+   - **Inbound Kafka:** `@KafkaListener` topics
+   - **Outbound Solace SCS:** `spring.cloud.stream.bindings.{channel}.destination` config values
+   - **Inbound Solace SCS:** `@StreamListener` binding destinations (resolved from config)
+   - **Outbound Solace JCSMP:** `Topic.of("...")` and `Queue.get("...")` literals; grep for constant definitions if topic is a constant; note unresolved constants
+   - **Inbound Solace JCSMP:** `XMLMessageConsumer.addSubscription(Topic.of("..."))` values
+   - Record all surface data for this repo (used in Phase 1c graph construction)
 
 Skip: `node_modules/`, `.git/`, `dist/`, `build/`, `target/`, `__pycache__/`, `.venv/`, `vendor/`, `.gradle/`, `.idea/`
+
+---
+
+> **Monorepo mode — per-service loop:** For each detected **service** (not library), run Phases 1c through 1h independently, scoping all file paths and grep commands to the service's directory. Repeat the full Phase 1c-1h cycle for each service before moving to Phase 2.
+
+> **Workspace mode — per-repo loop:** For each detected **service repo** (not library), run identity extraction + surface extraction (above), then Phases 1c through 1h independently, scoping all commands to that repo's directory. After all repos analyzed, proceed to new Phase 1c (graph construction).
+
+---
 
 ### 1c. Wide Scan (pattern inventory)
 
 **Skip if repo has <50 source files** — read all source files directly in step 1d instead.
 
-Run grep-based scans across the entire repo before reading any source file fully. See `../claudboard/references/stack-detectors.md` → "Wide Scan Grep Patterns" for exact commands per language. If any category returns 0 results, record "none detected" and continue with other categories.
+**In monorepo mode:** scope all grep and find commands to the current service's directory (e.g., `find order-service/src/main -name '*.java'` not `find . -name '*.java'`). Each service gets its own Pattern Inventory.
+
+Run grep-based scans across the entire repo before reading any source file fully. Load the language-specific file from `../claudboard/references/` (e.g., `stack-detectors-java.md` for Java/Kotlin projects, `stack-detectors-typescript.md` for TypeScript/JavaScript, etc.) for exact grep commands per language. Each file contains 7 categories: custom patterns, anti-patterns, conventions, security, API surface, observability, and dependencies. If any category returns 0 results, record "none detected" and continue with other categories.
 
 Run in parallel:
 
@@ -160,7 +288,7 @@ grep -rl '@Slf4j' --include='*.java' src/ | wc -l
 grep -rl 'LoggerFactory.getLogger' --include='*.java' src/ | wc -l
 ```
 
-Also run security, API surface, and observability scans **in the same parallel pass** — see `../claudboard/references/stack-detectors.md` → "Security posture signals", "API surface signals", "Observability signals". Record findings alongside anti-patterns.
+Also run security, API surface, and observability scans **in the same parallel pass** — these are included in the language-specific file you loaded for Wide Scan patterns (categories 4-6). Record findings alongside anti-patterns.
 
 **Output: Pattern Inventory** (internal — use it to drive step 1d decisions):
 ```
@@ -201,6 +329,10 @@ workflows: [workflow name → steps → files → source]
 | 200-500 | 20 |
 | 500+ | 15 |
 
+**For monorepos with M services:**
+- If M ≤ 3: use full budget per service
+- If M > 3: allocate budget proportionally across services (e.g., 15-file budget split as 5 files per service for 3 services)
+
 **Record the reason for each file selected** (used in Phase 2 reporting):
 - "AbstractDataEntity.java — base class with 43 subclasses"
 - "CanvasService.java — God class candidate at 609 LOC"
@@ -217,6 +349,8 @@ From each file, detect:
 ### 1e. Test strategy detection
 
 Check for test framework, test directories, coverage tooling, and whether tests appear in CI pipeline. See `../claudboard/references/quality-signals.md` → "Testing" checklist.
+
+**In monorepo mode:** detect test frameworks, coverage tooling, and CI gate independently per service — scoped to the current service's directory and CI job. A service using JUnit 5 and a service using Spock should each be recorded separately.
 
 ### 1f. Call-path tracing
 
@@ -257,11 +391,160 @@ If `.claude/` exists:
 
 ---
 
+### NEW PHASE 1c: Cross-Service Dependency Graph Construction (workspace mode only)
+
+**Run this phase ONLY in workspace mode**, after all per-repo analyses (Phases 1b-1h) are complete for every service repo.
+
+Using the service identity and communication surface data extracted in Phase 1b, build a directed dependency graph.
+
+**Step 1: Match outbound references against inbound surfaces** (task 5.1)
+
+For each repo A:
+  For each outbound reference in A:
+    For each repo B (where B ≠ A):
+      - **REST match:** outbound FeignClient `name` or URL segment contains B's identity → edge A→B (REST)
+      - **Kafka match:** outbound producer topic name equals B's inbound consumer topic name (exact string match) → edge A→B (Kafka)
+      - **Solace match:** outbound SCS/JCSMP topic equals B's inbound SCS/JCSMP topic (exact string match) → edge A→B (Solace)
+      - **No match:** record as "external dependency (unresolved)" → A → `[service-name] (external)` (task 5.2)
+
+**Step 2: Classify coupling strength per edge** (task 5.3)
+
+For each edge in the graph:
+
+| Edge Type | Coupling Strength | Condition |
+|-----------|------------------|-----------|
+| REST | **TIGHT** | No `@CircuitBreaker`, `@Retry`, or Resilience4j config detected in caller |
+| REST | **MODERATE** | `@CircuitBreaker`, `@Retry`, or Resilience4j config detected in caller |
+| Kafka/Solace async | **LOOSE** | Always |
+| Shared DB | **TIGHT** | Same DB connection string in multiple repos (if detected) |
+
+Grep for resilience patterns in the calling repo:
+```bash
+# Circuit breaker detection
+grep -r '@CircuitBreaker\|@Retry\|resilience4j' --include='*.java' src/
+
+# Feign client resilience config
+grep -r 'feign.circuitbreaker.enabled' --include='*.yml' --include='*.properties' .
+```
+
+**Step 3: Detect compound patterns** (tasks 5.4-5.5)
+
+- **Synchronous chain** (task 5.4): A→B→C where all edges are REST/TIGHT
+  - Flag: "Latency amplification and failure cascade risk — synchronous chain: A→B→C"
+
+- **Circular dependency** (task 5.5): A→B→A (any protocol)
+  - Flag: "Circular dependency — architectural risk: A ↔ B"
+
+**Step 4: Present graph for review** (task 5.6)
+
+Display the full graph to the user with edges, coupling classifications, and warnings:
+
+```
+Cross-Service Dependency Graph:
+
+Edges:
+  order-service ──REST/TIGHT──▶ user-service
+  order-service ──Kafka/LOOSE──▶ notification-service
+  user-service ──REST/MODERATE──▶ auth-service
+  frontend ──REST/TIGHT──▶ order-service
+  frontend ──REST/TIGHT──▶ user-service
+
+External Dependencies (unresolved):
+  order-service → payment-gateway (REST, not in workspace)
+
+Warnings:
+  ⚠ TIGHT: order-service → user-service (REST, no circuit breaker)
+  ⚠ TIGHT: frontend → order-service (REST, no circuit breaker)
+
+Proceed with ecosystem injection? [y/n/edit]
+```
+
+Wait for user confirmation before proceeding to Phase 1d.
+
+If user selects "edit" or indicates corrections, adjust the graph and re-present.
+
+---
+
+### NEW PHASE 1d: Ecosystem Context Injection (workspace mode only)
+
+**Run this phase ONLY in workspace mode**, after user confirms the graph in Phase 1c.
+
+For each **service repo** (not library repos, not workspace root):
+
+**Step 1: Write `.claude/memories/ecosystem.md`** (task 6.1)
+
+Path: `<repo-dir>/.claude/memories/ecosystem.md`
+
+Skip:
+- Library repos (excluded from service list in Phase 1a)
+- Workspace root directory (no file written there)
+
+**Step 2: Populate file content** (tasks 6.2-6.7)
+
+```markdown
+<!-- Managed by claudboard — do not edit manually. Run /refresh from workspace root to update. -->
+
+# Ecosystem Context: <service-name>
+
+## Role
+
+<one sentence describing this service's position and purpose in the ecosystem, inferred from its inbound/outbound surface and name>
+
+## Depends On
+
+| Service | Protocol | Purpose | Source File |
+|---------|----------|---------|-------------|
+| <target> | REST (sync) | <inferred purpose> | <FeignClient file or RestTemplate usage file> |
+| <target> | Kafka (async) | <inferred purpose> | <producer class> |
+| <target> | Solace (async) | <inferred purpose> | <publisher class or config> |
+| <external-service> | REST | [external — not in workspace] | <source file> |
+
+## Used By
+
+| Service | Protocol | How |
+|---------|----------|-----|
+| <caller> | REST | <endpoint paths called> |
+| <caller> | Kafka | consumes topic: <topic-name> |
+| <caller> | Solace | consumes topic: <topic-name> |
+
+## Shared Contracts
+
+**Kafka/Solace Topics:**
+- `topic-name` (producer/consumer) — <schema file if detected, otherwise "schema not detected">
+
+**OpenAPI Spec:**
+- `<path-to-openapi-spec>` (if detected via `springdoc-openapi` or manual `openapi.yaml`)
+
+## Coupling Warnings
+
+⚠ **TIGHT:** REST call to <target-service> has no circuit breaker — if <target> is unavailable, <this-service> fails (file: <source>)
+
+⚠ **TIGHT:** <caller-service> calls this service synchronously with no circuit breaker
+
+⚠ **Synchronous chain:** <service-a> → <this-service> → <service-b> — latency amplifies, failure cascades
+
+⚠ **Circular dependency:** <this-service> ↔ <other-service>
+```
+
+**Content population rules:**
+
+- **Role** (task 6.3): Infer from service name, inbound/outbound count, and protocol types (e.g., "order-service is the core transactional service, handling order creation and exposing REST endpoints to frontend; publishes order events to Kafka")
+- **Depends On** (task 6.4): One row per outbound edge; for external unresolved deps, mark as `[external — not in workspace]`
+- **Used By** (task 6.5): One row per inbound edge from the graph
+- **Shared Contracts** (task 6.6): List unique topics this service publishes or consumes; detect OpenAPI spec from `@OpenAPIDefinition` or `springdoc.api-docs.path` config or `openapi.yaml` file presence
+- **Coupling Warnings** (task 6.7): List all TIGHT edges involving this service (both as caller and callee), synchronous chains, circular dependencies
+
+---
+
 ## Phase 2: Analysis Report
 
 Present findings to the user. Use **WHAT / HOW / WHY / CONCERNS** structure.
 
 Load `../claudboard/references/pattern-catalog.md` to identify architecture patterns and anti-patterns. Load `../claudboard/references/quality-signals.md` to score quality dimensions and decide rule depth.
+
+**For monorepos:** produce one global report section plus one per-service section (same structure). See "Monorepo Report Structure" below.
+
+### Single-project report template
 
 ```
 ## Project Analysis: <repo-name>
@@ -276,8 +559,6 @@ Load `../claudboard/references/pattern-catalog.md` to identify architecture patt
 - CI/CD: <platform> — <stages/jobs detected>
 - Deploy: <model> — <IaC tool if detected>
 
-[For monorepos: include service map table]
-
 ### Why (reasoning behind decisions)
 - <detected constraint → inferred decision>
   e.g., "Azure Pipelines → team is on Azure; Pulumi TypeScript → IaC in same language as app code"
@@ -291,7 +572,7 @@ Evidence: [1 sentence]
 Evidence: [framework, CI gate, coverage %]
 
 **Convention consistency:** [Enforced / Mostly consistent / Inconsistent]
-Evidence: [linting, sample finding]
+Evidence: [linting, DI pattern, logging style, error handling strategy]
 
 **Dependency health:** [Current / Minor debt / Major debt]
 Evidence: [versions, BOM status, SBOM, cross-module mismatches]
@@ -313,18 +594,34 @@ Evidence: [actuator, metrics, tracing, structured logging]
 **Reflection usage:** [None / Config-only / Business-logic (flag)] — from Phase 1c grep
 **Code duplication:** [None detected / Minor / Structural (parallel hierarchies)] — from Phase 1g
 
+**Quality Score Summary:**
+
+| Dimension | Rating |
+|-----------|--------|
+| Architecture | [Established / Transitional / Ad-hoc] |
+| Testing | [Comprehensive / Basic / Missing] |
+| Conventions | [Enforced / Mostly consistent / Inconsistent] |
+| Dependencies | [Current / Minor debt / Major debt] |
+| CI/CD | [Full pipeline / Basic CI / Missing] |
+| Security | [Enforced / Basic / Missing] |
+| Observability | [Good / Acceptable / Debt] |
+| Documentation | [Complete / Basic / Missing] |
+
+**Adaptive Depth Decision:** [4+ Good] → Full rules | [2-3 Good] → Medium rules | [<2 Good] → Skeleton rules
+
 **Preserve:**
 - <good pattern> — <where found>
 
 **Watch:**
 - [SEVERITY] <anti-pattern> — <file/location>
 Include findings from Phase 1f (call-path tracing) and Phase 1g (duplication detection).
+For severity assignment, use the **Overview** column from `../claudboard-techdebt/references/severity-matrix.md`.
 For reflection or deeply-embedded anti-patterns: note whether they belong
 in conventions rules (actionable today) or tech-debt rules (document but
 can't avoid in current architecture). See pattern-catalog.md →
 "Reflection Anti-Patterns" → "Reporting guidance".
 
-After listing all Watch findings, **apply compound severity rules** from `../claudboard/references/pattern-catalog.md` → "Compound Severity Rules":
+After listing all Watch findings, **apply compound severity rules** from `../claudboard/references/pattern-catalog.md` → "Compound Severity Rules" (analyse-scoped rules):
 - Check each pair of Watch findings against the compound severity table
 - For any matching pair, add a compound entry: `[HIGH — compound] Finding A + Finding B → risk description (individually: severityA + severityB)`
 
@@ -381,7 +678,81 @@ Before listing skills, **run skill dedup check** (see `../claudboard/references/
 See `../claudboard/references/quality-signals.md` → "Token Estimation Guide" for heuristics.)
 ```
 
-Present this report to the user.
+---
+
+### Monorepo report structure
+
+For monorepos, produce **two levels** of report content:
+
+**Global report** (covers the whole repo — CI/CD, shared libs, cross-service patterns):
+
+```
+## Project Analysis: <repo-name> (Monorepo)
+
+### What (purpose & value)
+<repo-level purpose>
+
+### Monorepo Topology
+| Service | Stack | Directory | Purpose |
+|---------|-------|-----------|---------|
+| <name> | <stack> | `<dir>/` | <1-phrase> |
+
+| Library | Directory | Consumed by |
+|---------|-----------|-------------|
+| <name> | `<dir>/` | [services] |
+
+### How (global — applies to all services)
+- CI/CD: <platform> — <stages/jobs>
+- Deploy: <model> — <IaC tool>
+- Branch strategy: <detected pattern>
+- Commit conventions: <detected format>
+- Cross-service communication: <event bus / REST contracts if detected>
+
+### Per-Service Summary
+
+| Service | Architecture | Testing | Conventions | Quality |
+|---------|-------------|---------|-------------|---------|
+| <name> | [Established/Transitional/Ad-hoc] | [Comprehensive/Basic/Missing] | [Enforced/...] | [N/8 Good] |
+
+**Quality variance:** [e.g., "Testing: 2/3 services Comprehensive, 1/3 Basic — variance noted"]
+**Adaptive Depth:** [determined per service — see per-service reports]
+
+### Global Watch
+- [SEVERITY] <cross-service anti-pattern> — <evidence>
+
+### Proposed Global Artifacts
+**CLAUDE.md** — monorepo variant (services table, per-service commands, shared libs, global conventions)
+**Rules (global, no paths:):**
+- `ci-cd.md` — CI/CD and deployment conventions (applies everywhere)
+- `gitops.md` — IaC and GitOps constraints (applies everywhere) [if detected]
+```
+
+**Per-service report** (one per detected service):
+
+```
+## Service Analysis: <service-name>
+
+### Stack & Versions
+<stack, key dependencies, detected versions>
+
+### Quality Assessment
+[Same 8-dimension table as single-project, scoped to this service]
+
+**Adaptive Depth Decision:** [per-service decision]
+
+### Preserve / Watch
+[Same format as single-project, scoped to this service]
+
+### Proposed Artifacts (scoped to this service)
+**Rules:**
+- `<service-name>-conventions.md` (paths: `<service-dir>/**`) — <conventions>
+**Skills:**
+- `<skill-name>/` — scoped to <service-dir>/
+```
+
+---
+
+Present all sections to the user.
 
 If patterns are ambiguous or inconsistent, ask the user now — e.g.:
 - "Found both field injection and constructor injection — which should be the standard?"
@@ -392,21 +763,25 @@ If patterns are ambiguous or inconsistent, ask the user now — e.g.:
 
 ## Phase 3: Save Report & Next Steps
 
-After presenting the analysis, save the full report to `.claude/reports/claudboard-analysis.md`.
+After presenting the analysis, save reports to `.claude/reports/`. Create the directory if it doesn't exist.
 
-Create the `.claude/reports/` directory if it doesn't exist.
-
-The saved file must include YAML frontmatter:
+All saved files must include YAML frontmatter:
 
 ```yaml
 ---
 generated_at: <ISO 8601 timestamp>
 repo: <absolute path to project root>
-version: "2.0.0"
+version: "2.1.0"
 ---
 ```
 
-Followed by the full analysis report content (same WHAT/HOW/WHY/CONCERNS structure shown to the user).
+**Single-project:** Save the full report to `.claude/reports/claudboard-analysis.md`.
+
+**Monorepo:** Save two levels:
+- `.claude/reports/claudboard-analysis.md` — global report (topology, CI/CD, cross-service patterns, per-service summary table, proposed global artifacts). Frontmatter additionally includes `monorepo: true` and `services: [<dir-name>, ...]`.
+- `.claude/reports/claudboard-analysis-<dir-name>.md` — one per detected service (e.g., `claudboard-analysis-order-service.md`). Use the service's directory name as-is — no transformation.
+
+Each per-service report contains the full per-service analysis (stack, conventions, quality scores, Watch/Preserve, proposed scoped artifacts).
 
 After saving, ask the user:
 
@@ -438,6 +813,7 @@ After saving, ask the user:
 
 | File | When to load |
 |------|-------------|
-| `../claudboard/references/stack-detectors.md` | Start of Phase 1 |
+| `../claudboard/references/stack-detectors.md` | Start of Phase 1 — shared detection heuristics |
+| `../claudboard/references/stack-detectors-{lang}.md` | Phase 1c Wide Scan — load language-specific file (java, typescript, python, go, rust, or dotnet) |
 | `../claudboard/references/pattern-catalog.md` | Phase 2 — pattern/anti-pattern identification |
 | `../claudboard/references/quality-signals.md` | Phase 2 — quality scoring, rule depth, skill triggers |

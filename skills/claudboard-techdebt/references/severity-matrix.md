@@ -2,78 +2,84 @@
 
 Use during Phase 2 to assign severity and effort to each debt item.
 
+This is the **single source of truth** for severity assignment. The `Overview` column applies during broad project analysis (`/analyse`), while the `Debt` column applies during deep tech debt analysis (`/techdebt`).
+
+For findings not listed in this matrix, use **MEDIUM** as the default severity.
+
 ---
 
 ## Severity Rules
 
 ### Code Smells
 
-| Signal | Severity |
-|--------|----------|
-| God class >500 LOC, no tests covering it | CRITICAL |
-| God class >500 LOC, tests exist | HIGH |
-| God class 300-500 LOC | MEDIUM |
-| Long method >50 lines | MEDIUM |
-| Long method 30-50 lines | LOW |
-| Too many parameters >7 | MEDIUM |
-| Too many parameters 4-7 | LOW |
-| Boolean flag argument on public API | MEDIUM |
-| Boolean flag on internal method | LOW |
-| `return null` in service/repository layer | MEDIUM |
-| Log-and-throw in same catch block | LOW |
-| Copy-paste: same 5+ line block 3+ times | MEDIUM |
-| Copy-paste: same block 5+ times | HIGH |
-| Broad `catch(Exception)` that swallows | HIGH |
-| Broad `catch(Exception)` that wraps/rethrows | LOW |
-| Magic numbers in business logic | LOW |
-| Star imports | LOW |
+| Signal | Overview (analyse) | Debt (techdebt) |
+|--------|-------------------|-----------------|
+| God class >500 LOC, no tests covering it | HIGH | CRITICAL |
+| God class >500 LOC, tests exist | MEDIUM | HIGH |
+| God class 300-500 LOC | MEDIUM | MEDIUM |
+| Long method >50 lines | LOW | MEDIUM |
+| Long method 30-50 lines | LOW | LOW |
+| Too many parameters >7 | MEDIUM | MEDIUM |
+| Too many parameters 4-7 | LOW | LOW |
+| Boolean flag argument on public API | MEDIUM | MEDIUM |
+| Boolean flag on internal method | LOW | LOW |
+| `return null` in service/repository layer | MEDIUM | MEDIUM |
+| Log-and-throw in same catch block | MEDIUM | LOW |
+| Copy-paste: same 5+ line block 3+ times | MEDIUM | MEDIUM |
+| Copy-paste: same block 5+ times | MEDIUM | HIGH |
+| Broad `catch(Exception)` that swallows | HIGH | HIGH |
+| Broad `catch(Exception)` that wraps/rethrows | MEDIUM | LOW |
+| Magic numbers in business logic | LOW | LOW |
+| Star imports | LOW | LOW |
 
 ### Design Debt
 
-| Signal | Severity |
-|--------|----------|
-| Switch >6 cases on type discriminator | HIGH |
-| Switch 4-6 cases on type discriminator | MEDIUM |
-| Instanceof chain >3 types | MEDIUM |
-| Instanceof chain >6 types | HIGH |
-| Sequential setters >8 (missing Builder) | MEDIUM |
-| Sequential setters 5-8 | LOW |
-| Constructor with >7 dependencies | MEDIUM |
-| Anemic domain model (entity package, only getters/setters) | MEDIUM |
-| Utility class with mutable state | MEDIUM |
-| Manual object copy (field-by-field) >5 fields | MEDIUM |
-| Nested callbacks >3 levels | MEDIUM |
+| Signal | Overview (analyse) | Debt (techdebt) |
+|--------|-------------------|-----------------|
+| Switch >6 cases on type discriminator | HIGH | HIGH |
+| Switch 4-6 cases on type discriminator | MEDIUM | MEDIUM |
+| Instanceof chain >3 types | MEDIUM | MEDIUM |
+| Instanceof chain >6 types | HIGH | HIGH |
+| Sequential setters >8 (missing Builder) | MEDIUM | MEDIUM |
+| Sequential setters 5-8 | LOW | LOW |
+| Constructor with >7 dependencies | MEDIUM | MEDIUM |
+| Anemic domain model (entity package, only getters/setters) | MEDIUM | MEDIUM |
+| Utility class with mutable state | MEDIUM | MEDIUM |
+| Manual object copy (field-by-field) >5 fields | MEDIUM | MEDIUM |
+| Nested callbacks >3 levels | MEDIUM | MEDIUM |
 
 ### Performance Debt
 
-| Signal | Severity |
-|--------|----------|
-| Same entity fetched >2x in one request path | HIGH |
-| DB call inside loop body (N+1) | HIGH |
-| Missing pagination on list endpoint returning unbounded results | HIGH |
-| Missing @Cacheable on reference/config data queried per request | MEDIUM |
-| Sequential independent service calls (parallelizable) | MEDIUM |
-| String concatenation in loop (should be StringBuilder) | LOW |
-| findAll() when filtered subset needed | MEDIUM |
-| Eager loading of unused relations | MEDIUM |
+| Signal | Overview (analyse) | Debt (techdebt) |
+|--------|-------------------|-----------------|
+| Same entity fetched >2x in one request path | HIGH | HIGH |
+| DB call inside loop body (N+1) | HIGH | HIGH |
+| Missing pagination on list endpoint returning unbounded results | HIGH | HIGH |
+| Missing @Cacheable on reference/config data queried per request | MEDIUM | MEDIUM |
+| Sequential independent service calls (parallelizable) | MEDIUM | MEDIUM |
+| String concatenation in loop (should be StringBuilder) | LOW | LOW |
+| findAll() when filtered subset needed | MEDIUM | MEDIUM |
+| Eager loading of unused relations | MEDIUM | MEDIUM |
 
 ### Architecture Debt
 
-| Signal | Severity |
-|--------|----------|
-| Controller imports Repository directly (layer skip) | HIGH |
-| Circular module dependency (A→B→A) | HIGH |
-| God module >50 classes in one package | MEDIUM |
-| Missing interface for external service call | MEDIUM |
-| Dead endpoint (no route, no caller) | LOW |
-| Business logic in controller | MEDIUM |
-| DB/persistence logic in service (not repository) | MEDIUM |
-| Validation logic in controller (should be service/domain) | LOW |
-| Shared mutable state between services | HIGH |
+| Signal | Overview (analyse) | Debt (techdebt) |
+|--------|-------------------|-----------------|
+| Controller imports Repository directly (layer skip) | HIGH | HIGH |
+| Circular module dependency (A→B→A) | HIGH | HIGH |
+| God module >50 classes in one package | MEDIUM | MEDIUM |
+| Missing interface for external service call | MEDIUM | MEDIUM |
+| Dead endpoint (no route, no caller) | LOW | LOW |
+| Business logic in controller | MEDIUM | MEDIUM |
+| DB/persistence logic in service (not repository) | MEDIUM | MEDIUM |
+| Validation logic in controller (should be service/domain) | LOW | LOW |
+| Shared mutable state between services | HIGH | HIGH |
 
 ---
 
 ## Compound Severity Rules
+
+**These compound rules apply during deep tech debt analysis (`/techdebt`).** For compound rules used during project analysis (`/analyse`), see `../claudboard/references/pattern-catalog.md`.
 
 When two findings co-occur, escalate. Apply after individual scoring.
 

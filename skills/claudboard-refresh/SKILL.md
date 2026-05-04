@@ -54,7 +54,8 @@ Read all existing Claude artifacts and build a coverage map:
 
 ### 2d. Prior analysis report
 - Check for `.claude/reports/claudboard-analysis.md`
-- If found: read `generated_at` timestamp for delta comparison
+- If found: read `generated_at` timestamp for delta comparison and check `monorepo: true` in frontmatter
+- **Monorepo:** also list all `claudboard-analysis-<name>.md` files — these represent the previously detected services. Record service names (derived from filenames) as the prior service list.
 
 ---
 
@@ -91,6 +92,74 @@ Compare Wide Scan results against existing artifacts:
 - **New test frameworks** or test directories
 - **New anti-patterns** (Wide Scan God class candidates, reflection, broad catches) not in tech-debt rule
 - **New patterns** (e.g., new DI approach, new error handling) not documented in rules
+
+**Monorepo service topology drift** (if prior report has `monorepo: true`):
+- Re-run monorepo detection (see `../claudboard/references/stack-detectors.md` → "Monorepo Detection & Service Classification")
+- Compare current detected services against prior service list (from `cloudboard-analysis-*.md` filenames):
+  - Build root present now but no matching report → flag: `"New service detected: {dir-name}. Run /analyse to include it."`
+  - Report exists but build root directory is gone → flag: `"Service removed: {dir-name}. Stale report and rules can be deleted."`
+  - Directory renamed (heuristic: same stack detected in different directory, old directory gone) → flag: `"Service appears renamed: {old-name} → {new-name}. Re-run /analyse to update."`
+
+**Workspace mode refresh behavior** (tasks 7.1-7.4):
+
+Workspace mode is detected when:
+- CWD contains subdirectories with independent `.git/` repos AND each has a build file
+- OR: prior analysis report exists with `workspace: true` in frontmatter (to be added in future — for now, detect by CWD structure)
+
+**Workspace-level refresh** (task 7.1, CWD is workspace root):
+
+When `/refresh` is run from the workspace root (directory containing multiple repos with `.git/`):
+
+1. Re-run per-repo surface extraction:
+   - Follow `../claudboard/references/stack-detectors.md` → "Cross-Service Surface Detection"
+   - For each service repo: extract service identity, outbound REST/Kafka/Solace, inbound REST/Kafka/Solace
+   - Record surface data for graph construction
+
+2. Re-run Phase 1c from analyse skill (graph construction):
+   - Match outbound references against inbound surfaces across all repos
+   - Classify coupling strength (TIGHT/MODERATE/LOOSE)
+   - Detect synchronous chains and circular dependencies
+   - Present updated graph to user for confirmation
+
+3. **Completely overwrite** all `<repo>/.claude/memories/ecosystem.md` files with current graph data:
+   - Each service's Role, Depends On, Used By, Shared Contracts, Coupling Warnings sections
+   - Skip library repos and workspace root (no ecosystem.md written there)
+
+4. **New-service detection** (task 7.2):
+   - Compare current repo list against prior analysis (if prior report exists)
+   - If a new repo directory appears that was not in the prior analysis:
+     - Flag: "New repo detected: {dir-name}. Run `/analyse` from workspace root to include it in the ecosystem graph."
+   - Do not attempt to analyse the new repo during refresh — full `/analyse` required for cross-service context
+
+**Service-level refresh** (task 7.3, CWD is a single service repo):
+
+When `/refresh` is run from within a single service repo directory:
+
+1. Check for sibling repos at parent level (same check as right-level detection in analyse):
+   - Scan `../` for directories with build files + `.git/`
+   - If N≥2 siblings found → workspace context exists
+
+2. If workspace context exists:
+   - Re-run surface extraction for this service only (follow `../claudboard/references/stack-detectors.md` → "Cross-Service Surface Detection")
+   - Update this service's `ecosystem.md` from its own outbound perspective:
+     - **Depends On** section: re-derive from current outbound calls
+     - **Shared Contracts** section: update published topics from current code
+     - **Used By and Coupling Warnings**: cannot be updated (requires full workspace graph) — leave existing content
+   - Display stale warning:
+     ```
+     Updated ecosystem context for this service.
+     
+     ⚠ Warning: Ecosystem files in sibling services may be stale:
+     • user-service/.claude/memories/ecosystem.md
+     • notification-service/.claude/memories/ecosystem.md
+     
+     Run `/refresh` from workspace root to sync all services.
+     ```
+
+3. **No-workspace-context case** (task 7.4):
+   - If no sibling repos detectable at parent level (workspace context does not exist)
+   - Proceed with normal service-level refresh (delta discovery against existing rules/skills)
+   - Do not attempt ecosystem updates or warnings
 
 ---
 
@@ -196,7 +265,8 @@ Overwrite `.claude/reports/claudboard-analysis.md` with a fresh full analysis (c
 
 | File | When to load |
 |------|-------------|
-| `../claudboard/references/stack-detectors.md` | Step 3 — delta discovery |
+| `../claudboard/references/stack-detectors.md` | Step 3 — shared detection heuristics |
+| `../claudboard/references/stack-detectors-{lang}.md` | Step 3 — language-specific patterns if full Wide Scan needed |
 | `../claudboard/references/pattern-catalog.md` | Step 4 — pattern identification |
 | `../claudboard/references/quality-signals.md` | Step 4 — quality assessment |
 | `../claudboard/references/claude-md-template.md` | Step 5 — CLAUDE.md updates |

@@ -122,6 +122,98 @@ Shared context in `.claude/memories/` — [brief description of what's there].
 
 ---
 
+---
+
+## Monorepo Variant Template
+
+Use this template instead of the standard one when the project is a monorepo (N+1 analysis reports detected). Target: 80-150 lines. Keeps repo-level concerns separate from per-service concerns.
+
+```markdown
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+[1-2 sentences: what does this monorepo do, how many services, overall tech stack, deployment model]
+
+Example: "craftsphere is a B2B SaaS monorepo with 3 backend microservices (Java 21/Spring Boot 3.4/Gradle), 1 React/TypeScript frontend, and 1 shared Java library. Deploys via GitOps to Kubernetes using Pulumi + ArgoCD."
+
+## Services
+
+| Service | Stack | Directory | Purpose |
+|---------|-------|-----------|---------|
+| `[service-name]` | [stack] | `[dir/]` | [1-phrase purpose] |
+| `[service-name]` | [stack] | `[dir/]` | [1-phrase purpose] |
+
+## Shared Libraries
+
+| Library | Directory | Consumed by |
+|---------|-----------|-------------|
+| `[library-name]` | `[dir/]` | [service-a, service-b] |
+
+## Commands
+
+[Group by service. Use exact detected commands from build configs and CI.]
+
+### [service-a] (from `[dir/]`)
+- Build: `[command]`
+- Test: `[command]`
+- [Single test]: `[command pattern]`
+
+### [service-b] (from `[dir/]`)
+- Build: `[command]`
+- Test: `[command]`
+
+### [frontend] (from `[dir/]`)
+- Dev: `[command]` | Build: `[command]` | Test: `[command]`
+
+### [shared-library] (from `[dir/]`)
+- Build: `[command]` | Publish: `[command]`
+
+### Infrastructure / DevOps
+[Only include if IaC or deployment commands detected]
+
+### Git (always from repo root)
+- Branch: `[detected naming convention]`
+- Commit: `[detected commit format]`
+
+## Key Architecture
+
+- **Repo structure:** Monorepo — [N services + M libraries], each independently buildable/deployable
+- **Backend pattern:** [architecture pattern] — reference: `[reference-service/]` is the gold standard
+- **Frontend:** [framework, state management] — `[dir/]`
+- **Shared library:** `[lib-name]` — [what it provides, how consumed]
+- **Data:** [databases per service, event bus if applicable]
+- **DevOps:** [IaC tool, CI platform, deployment model]
+
+## Coding Rules & Skills
+
+### Auto-loaded Rules (`.claude/rules/`)
+
+| Rule file | Auto-loads when touching |
+|-----------|------------------------|
+| `[service-name]-conventions.md` | `[service-dir]/**` |
+| `[other-service]-conventions.md` | `[other-dir]/**` |
+| `ci-cd.md` | `.github/workflows/**`, `azure-pipelines.yml` |
+
+### Skills (`.claude/skills/`)
+
+| Scope | Skill |
+|-------|-------|
+| [what it does] | `[skill-name]` |
+
+## Critical Rules (always apply)
+
+[5-7 rules covering cross-service concerns: deployment, commit format, shared library usage, infra constraints]
+
+- [Rule 1] — [brief reason]
+- [Rule 2]
+...
+```
+
+---
+
 ## Merge Strategy (when CLAUDE.md already exists)
 
 1. Read existing CLAUDE.md fully
