@@ -2,6 +2,8 @@
 
 Use during Phase 2 Pass 1. Extends `../claudboard/references/pattern-catalog.md` with deeper analysis heuristics.
 
+**Severity source of truth:** Use `severity-matrix.md` for final severity assignment. Severity hints in this file are approximate guides — the matrix takes precedence.
+
 ---
 
 ## God Class Analysis
@@ -38,6 +40,13 @@ ClassName.java (NNN LOC)
       Uses: dep4, dep5, dep6
       Methods: method6(), method7(), method8(), method9()
 ```
+
+### Naming Extracted Classes
+
+When extracting a cluster from a God class:
+- Name by `{CoreResponsibility}{Capability}` — e.g., methods using `emailService` + `templateEngine` → `NotificationService`
+- If original class is `{Domain}Manager`, extracted class should be `{Domain}{Capability}Service`
+- Avoid: `Helper`, `Util`, `Manager` (ambiguous and non-discoverable)
 
 ### Split Order
 

@@ -20,9 +20,9 @@ Analyzes a repository and generates Claude Code artifacts that let you work on i
 
 ## Workflow
 
-Onboarding is a two-step process. Run each step separately for best results.
+Onboarding is a two-phase process. Run each phase separately for best results.
 
-### Step 1: Analyse
+### Phase 1: Analyse
 
 ```
 /analyse [path]
@@ -32,7 +32,7 @@ Scans the project (read-only), detects patterns, quality signals, and anti-patte
 
 At the end of analysis, you'll be asked whether to continue with generation or do it later.
 
-### Step 2: Generate
+### Phase 2: Generate
 
 ```
 /generate
@@ -53,9 +53,17 @@ Sub-skills load these shared references as needed:
 
 | File | Used by | Purpose |
 |------|---------|---------|
-| `references/stack-detectors.md` | analyse | Detection heuristics per language/framework |
-| `references/pattern-catalog.md` | analyse | Architecture patterns + anti-patterns catalog |
-| `references/quality-signals.md` | analyse | Quality scoring, rule depth, skill triggers |
+| `references/stack-detectors.md` | analyse, techdebt, refresh | Shared detection heuristics, infra signals, monorepo detection |
+| `references/stack-detectors-java.md` | analyse, techdebt | Java/Kotlin Wide Scan patterns (7 categories) |
+| `references/stack-detectors-typescript.md` | analyse, techdebt | TypeScript/JavaScript Wide Scan patterns (7 categories) |
+| `references/stack-detectors-python.md` | analyse, techdebt | Python Wide Scan patterns (7 categories) |
+| `references/stack-detectors-go.md` | analyse, techdebt | Go Wide Scan patterns (7 categories) |
+| `references/stack-detectors-rust.md` | analyse, techdebt | Rust Wide Scan patterns (7 categories) |
+| `references/stack-detectors-dotnet.md` | analyse, techdebt | .NET/C# Wide Scan patterns (7 categories) |
+| `references/pattern-catalog.md` | analyse, techdebt | Architecture patterns + anti-patterns catalog |
+| `references/quality-signals.md` | analyse, refresh | Quality scoring, rule depth, skill triggers |
 | `references/claude-md-template.md` | generate | CLAUDE.md generation template |
 | `references/rule-templates.md` | generate | Rule file templates per language |
 | `references/skill-generation.md` | generate | Full-scope skill generation guide |
+
+The techdebt skill also has its own references in `../claudboard-techdebt/references/`: code-smell-catalog, design-debt-patterns, perf-debt-patterns, arch-debt-patterns, severity-matrix, and report-template.

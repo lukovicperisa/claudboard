@@ -108,27 +108,29 @@ Use this during Phase 1 convention inference and Phase 2 quality assessment. Mat
 
 ## Anti-Patterns Catalog
 
+**For severity assignment, see `../claudboard-techdebt/references/severity-matrix.md`.**
+
 ### Code Anti-Patterns
 
-| Anti-pattern | Detection method | Severity |
-|-------------|-----------------|---------|
-| Field injection | `@Autowired` on non-constructor fields in Java | HIGH — tight coupling, hard to test |
-| God class | Source file >500 lines | MEDIUM — violates SRP |
-| God service | Service class >300 lines with 10+ methods | MEDIUM |
-| Null returns | Methods returning `null` instead of `Optional` | MEDIUM |
-| Exception swallowing | Empty catch blocks or `catch (Exception e) {}` | HIGH |
-| Broad exception catching | `catch (Exception e)` that wraps/rethrows instead of catching specific types | MEDIUM |
-| Sequential generic catches | 3+ `catch (Exception)` blocks in one method — masks distinct failure modes | HIGH |
-| Defensive lambdas | try-catch inside stream/removeIf/forEach lambdas — hides data integrity issues behind silent recovery | MEDIUM |
-| Console logging | `System.out.println`, `console.log` in production code (outside tests) | MEDIUM |
-| Magic numbers | Unnamed numeric constants inline | LOW |
-| Circular imports | Service A imports Service B, B imports A | HIGH |
-| Copy-paste duplication | Same ~5-line code pattern (e.g., try-catch block, reflection sequence) appearing 3+ times across different files | MEDIUM |
-| Too many parameters | Methods with >7 parameters; >3 is a smell | MEDIUM — hard to read, easy to mix up argument order |
-| Boolean flag arguments | `process(data, true, false)` — caller intent invisible at call site | MEDIUM — use enum, separate methods, or config object |
-| Log and throw | `log.error(...)` + `throw` in same catch block | MEDIUM — duplicates error reporting up the call stack |
-| Long methods | Methods >30 lines | LOW — break into named steps |
-| Star imports | `import java.util.*` | LOW — hides dependencies, causes merge conflicts |
+| Anti-pattern | Detection method | Description |
+|-------------|-----------------|-------------|
+| Field injection | `@Autowired` on non-constructor fields in Java | Tight coupling, hard to test |
+| God class | Source file >500 lines | Violates SRP |
+| God service | Service class >300 lines with 10+ methods | Too many responsibilities |
+| Null returns | Methods returning `null` instead of `Optional` | Risks NullPointerException |
+| Exception swallowing | Empty catch blocks or `catch (Exception e) {}` | Hides errors |
+| Broad exception catching | `catch (Exception e)` that wraps/rethrows instead of catching specific types | Masks specific exceptions |
+| Sequential generic catches | 3+ `catch (Exception)` blocks in one method | Masks distinct failure modes |
+| Defensive lambdas | try-catch inside stream/removeIf/forEach lambdas | Hides data integrity issues behind silent recovery |
+| Console logging | `System.out.println`, `console.log` in production code (outside tests) | No log levels or structured logging |
+| Magic numbers | Unnamed numeric constants inline | Unclear meaning |
+| Circular imports | Service A imports Service B, B imports A | Tight coupling |
+| Copy-paste duplication | Same ~5-line code pattern appearing 3+ times across different files | Maintenance burden |
+| Too many parameters | Methods with >7 parameters; >3 is a smell | Hard to read, easy to mix up argument order |
+| Boolean flag arguments | `process(data, true, false)` | Caller intent invisible at call site — use enum, separate methods, or config object |
+| Log and throw | `log.error(...)` + `throw` in same catch block | Duplicates error reporting up the call stack |
+| Long methods | Methods >30 lines | Break into named steps |
+| Star imports | `import java.util.*` | Hides dependencies, causes merge conflicts |
 
 ### Reflection Anti-Patterns
 
@@ -137,14 +139,14 @@ Reflection is normal in framework/config code (Spring, Jackson). It becomes an a
 **Detection:**
 Grep production code (exclude tests) for: `ReflectionUtils`, `getDeclaredField`, `setAccessible`, `makeAccessible`, `Field.get`, `Method.invoke`, `ParameterizedType`, `getGenericSuperclass`
 
-**Severity tiers:**
+**Detection guidance** (severity assignment in `severity-matrix.md`):
 
-| Location | Count threshold | Severity |
-|----------|----------------|---------|
-| Config/startup only | any | LOW — normal framework usage |
-| CRUD path (service/helper classes) | >5 | HIGH — fragile, no compile-time safety |
-| Read path with `invoke()` | any | HIGH — runtime method dispatch, breaks refactoring tools |
-| Hardcoded field name strings (e.g., `getDeclaredField("deletedDate")`) | any | MEDIUM — rename breaks silently, no compiler warning |
+| Location | Count threshold | Risk |
+|----------|----------------|------|
+| Config/startup only | any | Normal framework usage |
+| CRUD path (service/helper classes) | >5 | Fragile, no compile-time safety |
+| Read path with `invoke()` | any | Runtime method dispatch, breaks refactoring tools |
+| Hardcoded field name strings (e.g., `getDeclaredField("deletedDate")`) | any | Rename breaks silently, no compiler warning |
 
 **What to check after detection:**
 - Is reflection in the hot path? (every request vs. one-time startup)
@@ -160,49 +162,51 @@ When reflection is deeply embedded in the architecture (e.g., cascade callbacks 
 
 ### Architecture Anti-Patterns
 
-| Anti-pattern | Detection method | Severity |
-|-------------|-----------------|---------|
-| Shared database | Multiple services referencing same DB connection string | HIGH |
-| Anemic domain model | Domain classes have only getters/setters, no behavior | MEDIUM |
-| Missing service boundary | Direct class imports between services in monorepo | HIGH |
-| Mixed state managers | Multiple state management libs in same frontend app (e.g., Redux + Zustand) | MEDIUM |
-| Hardcoded environment | Environment-specific values in source code (not config/secrets) | HIGH |
-| Missing retry logic | External API calls with no retry/circuit breaker | MEDIUM |
-| Parallel class hierarchies with duplication | Classes with shared prefix/suffix (Root*/Branch*/Leaf*, *V1/*V2) containing copy-pasted methods | MEDIUM — multiplies maintenance cost, bugs fixed in one hierarchy missed in others |
+| Anti-pattern | Detection method | Description |
+|-------------|-----------------|-------------|
+| Shared database | Multiple services referencing same DB connection string | Breaks service isolation |
+| Anemic domain model | Domain classes have only getters/setters, no behavior | Logic scattered in service layer |
+| Missing service boundary | Direct class imports between services in monorepo | Tight coupling between services |
+| Mixed state managers | Multiple state management libs in same frontend app (e.g., Redux + Zustand) | Inconsistent state handling |
+| Hardcoded environment | Environment-specific values in source code (not config/secrets) | Cannot deploy to multiple environments |
+| Missing retry logic | External API calls with no retry/circuit breaker | Transient failures cascade |
+| Parallel class hierarchies with duplication | Classes with shared prefix/suffix (Root*/Branch*/Leaf*, *V1/*V2) containing copy-pasted methods | Multiplies maintenance cost, bugs fixed in one hierarchy missed in others |
 
 ### Testing Anti-Patterns
 
-| Anti-pattern | Detection method | Severity |
-|-------------|-----------------|---------|
-| No tests | No test files at all | HIGH |
-| Test-only happy path | Test files exist but no failure/edge case tests | MEDIUM |
-| Spock stub+verify | In Spock: stubbing in `given:` and verifying same method in `then:` | HIGH — Spock ignores the stub |
-| Mocking everything | Over-mocked tests that don't test real behavior | MEDIUM |
-| No integration tests | Only unit tests, no integration or contract tests | MEDIUM |
-| Missing test for CI | Tests not wired to CI pipeline | HIGH |
+| Anti-pattern | Detection method | Description |
+|-------------|-----------------|-------------|
+| No tests | No test files at all | No regression protection |
+| Test-only happy path | Test files exist but no failure/edge case tests | Incomplete coverage |
+| Spock stub+verify | In Spock: stubbing in `given:` and verifying same method in `then:` | Spock ignores the stub, test always passes |
+| Mocking everything | Over-mocked tests that don't test real behavior | False confidence |
+| No integration tests | Only unit tests, no integration or contract tests | Misses interaction bugs |
+| Missing test for CI | Tests not wired to CI pipeline | Manual testing only |
 
 ### Security Anti-Patterns
 
-| Anti-pattern | Detection method | Severity |
-|-------------|-----------------|---------|
-| No security framework | No `SecurityFilterChain`, `@EnableMethodSecurity`, or equivalent in production source | HIGH |
-| Unprotected REST endpoints | Controller endpoint count > auth-annotated endpoint count | MEDIUM — verify intentional public routes |
-| No CORS configuration | REST controllers exist but no `CorsConfigurationSource`, `@CrossOrigin`, or CORS WebMvcConfigurer | INFO — verify if frontend on same origin |
-| Method-level auth absent | Security framework present but no `@PreAuthorize`/`@Secured`/custom auth annotations | MEDIUM — class-level or filter-level auth may cover this; verify |
+| Anti-pattern | Detection method | Description |
+|-------------|-----------------|-------------|
+| No security framework | No `SecurityFilterChain`, `@EnableMethodSecurity`, or equivalent in production source | No authentication or authorization |
+| Unprotected REST endpoints | Controller endpoint count > auth-annotated endpoint count | Verify intentional public routes |
+| No CORS configuration | REST controllers exist but no `CorsConfigurationSource`, `@CrossOrigin`, or CORS WebMvcConfigurer | Verify if frontend on same origin |
+| Method-level auth absent | Security framework present but no `@PreAuthorize`/`@Secured`/custom auth annotations | Class-level or filter-level auth may cover this; verify |
 
 ### Infrastructure Anti-Patterns
 
-| Anti-pattern | Detection method | Severity |
-|-------------|-----------------|---------|
-| Mixed lockfiles | `package-lock.json` + `yarn.lock` present | MEDIUM |
-| No .gitignore | Missing `.gitignore` | MEDIUM |
-| Hardcoded secrets | Literal passwords/API keys in source code | CRITICAL |
-| No CI | No CI configuration file | HIGH |
-| Manual deployment | No IaC, no pipeline — manual steps documented | HIGH |
+| Anti-pattern | Detection method | Description |
+|-------------|-----------------|-------------|
+| Mixed lockfiles | `package-lock.json` + `yarn.lock` present | Conflicting dependency resolution |
+| No .gitignore | Missing `.gitignore` | Build artifacts in version control |
+| Hardcoded secrets | Literal passwords/API keys in source code | Security risk |
+| No CI | No CI configuration file | No automated testing |
+| Manual deployment | No IaC, no pipeline — manual steps documented | Error-prone deployments |
 
 ---
 
 ## Compound Severity Rules
+
+**These compound rules apply during project analysis (`/analyse`).** For compound rules used during deep tech debt analysis (`/techdebt`), see `../claudboard-techdebt/references/severity-matrix.md`.
 
 When two anti-patterns co-occur, their combined risk is greater than the sum of individual severities. Apply these rules during Phase 2 after collecting all Watch findings. Report with `[SEVERITY — compound]` label.
 
