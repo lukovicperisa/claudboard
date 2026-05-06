@@ -113,10 +113,10 @@ Write to: `<project>/CLAUDE.md` (project root, not inside `.claude/`)
 
 For each rule to generate, follow `../claudboard/references/rule-templates.md` → appropriate template. Fill all placeholders with values from actual source code — never use generic examples.
 
-**Adaptive depth** (from quality-signals scoring in the analysis report):
-- 4+ dimensions "Good" → full rules (80-120 lines) with real code examples from sampled files
-- 2-3 "Good" → medium rules (50-70 lines)
-- <2 "Good" → skeleton rules (30-50 lines) with TODO markers
+**Adaptive depth** (from quality score average in the analysis report):
+- Average ≥7.0 → full rules (80-120 lines) with real code examples from sampled files
+- Average 4.0-6.9 → medium rules (50-70 lines)
+- Average <4.0 → skeleton rules (30-50 lines) with TODO markers
 
 **Single-project:** Standard rules with `paths:` globs covering the whole codebase.
 

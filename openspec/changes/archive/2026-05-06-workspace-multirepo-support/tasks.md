@@ -61,8 +61,16 @@
 
 ## 8. Verification
 
-- [ ] 8.1 Test right-level check: run `/analyse` from a microservice directory that has siblings; verify step-up prompt fires with correct sibling list and stacks; verify "n" proceeds without further checks
-- [ ] 8.2 Test workspace detection: run `/analyse` from a parent directory above multiple git repos; verify each repo is classified as service or library; verify topology presentation and confirmation step
-- [ ] 8.3 Test surface extraction and graph construction: verify REST edges detected via FeignClient; verify Kafka edges via producer/consumer topic matching; verify Solace Spring Cloud Stream and JCSMP edges detected in respective projects
-- [ ] 8.4 Test ecosystem injection: verify `.claude/memories/ecosystem.md` written in each service repo with correct sections; verify libraries and workspace root have no ecosystem.md written
-- [ ] 8.5 Test workspace refresh: verify all ecosystem.md files overwritten; verify new-service detection warning; verify service-level refresh stale warning
+- [x] 8.1 Test right-level check: run `/analyse` from a microservice directory that has siblings; verify step-up prompt fires with correct sibling list and stacks; verify "n" proceeds without further checks
+- [x] 8.2 Test workspace detection: run `/analyse` from a parent directory above multiple git repos; verify each repo is classified as service or library; verify topology presentation and confirmation step
+- [x] 8.3 Test surface extraction and graph construction: verify REST edges detected via FeignClient; verify Kafka edges via producer/consumer topic matching; verify Solace Spring Cloud Stream and JCSMP edges detected in respective projects
+- [x] 8.4 Test ecosystem injection: verify `.claude/memories/ecosystem.md` written in each service repo with correct sections; verify libraries and workspace root have no ecosystem.md written
+- [x] 8.5 Test workspace refresh: verify all ecosystem.md files overwritten; verify new-service detection warning; verify service-level refresh stale warning
+
+## 9. Quality Scoring Update
+
+- [x] 9.1 Convert quality scoring from categorical (Good/Acceptable/Debt) to 1-10 numeric scale in quality-signals.md
+- [x] 9.2 Update analyse SKILL.md report templates to show N/10 scores instead of categorical ratings
+- [x] 9.3 Update monorepo per-service summary table to use numeric scores
+- [x] 9.4 Update generate SKILL.md adaptive depth thresholds to use average score (≥7.0, 4.0-6.9, <4.0)
+- [x] 9.5 Update quality-signals.md report template with 1-10 scoring format
