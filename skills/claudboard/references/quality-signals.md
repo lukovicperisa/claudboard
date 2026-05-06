@@ -6,10 +6,10 @@ Use during Phase 1 (detection) and Phase 2 (quality assessment). Maps observable
 
 ## Scoring Dimensions
 
-Rate each dimension during analysis. Use these to determine adaptive rule depth:
+Rate each dimension on a 1-10 scale (whole numbers only). Use these scores to determine adaptive rule depth:
 
-| Dimension | Good | Acceptable | Debt |
-|-----------|------|-----------|------|
+| Dimension | 7-10 (Strong) | 4-6 (Acceptable) | 1-3 (Weak) |
+|-----------|---------------|------------------|------------|
 | Testing | Test framework + coverage + CI gate | Tests exist, no coverage threshold | No tests or tests not in CI |
 | Architecture | Clear pattern, consistently applied | Pattern visible but inconsistent | No discernible pattern, ad hoc |
 | Conventions | Enforced via lint/CI, consistent | Mostly consistent, occasional drift | Inconsistent, no enforcement |
@@ -19,10 +19,16 @@ Rate each dimension during analysis. Use these to determine adaptive rule depth:
 | Security | Security framework + method-level auth | Security framework, no method-level auth | No security framework detected |
 | Observability | Actuator + metrics + tracing | Actuator or metrics only | No observability tooling |
 
+**Scoring guidance:**
+- 10: Exemplary - exceeds all criteria for that dimension
+- 7-9: Strong - meets all criteria in "Strong" column
+- 4-6: Acceptable - meets criteria in "Acceptable" column
+- 1-3: Weak - meets criteria in "Weak" column or worse
+
 **Adaptive rule depth decision:**
-- 4+ dimensions "Good" → **Full rules** (100-120 lines with code examples)
-- 2-3 dimensions "Good" → **Medium rules** (60-80 lines) + ask user about unclear areas
-- <2 dimensions "Good" → **Skeleton rules** (30-50 lines with TODOs) + note tech debt prominently
+- Average ≥7.0 → **Full rules** (100-120 lines with code examples)
+- Average 4.0-6.9 → **Medium rules** (60-80 lines) + ask user about unclear areas
+- Average <4.0 → **Skeleton rules** (30-50 lines with TODOs) + note tech debt prominently
 
 ---
 
@@ -124,26 +130,47 @@ Use this exact structure for the Quality Assessment section in Phase 2:
 ```
 ### Quality Assessment
 
-**Architecture maturity:** [Established / Transitional / Ad-hoc]
-Evidence: [1 sentence]
+Score each dimension 1-10 (whole numbers only).
 
-**Testing coverage:** [Comprehensive / Basic / Missing]
+**Testing:** [N]/10
 Evidence: [test framework, CI gate status, coverage %]
 
-**Convention consistency:** [Enforced / Mostly consistent / Inconsistent]
-Evidence: [linting config, sample finding]
+**Architecture:** [N]/10
+Evidence: [pattern name, consistency]
 
-**Dependency health:** [Current / Minor debt / Major debt]
-Evidence: [versions found, BOM status, SBOM, cross-module mismatches if any]
+**Conventions:** [N]/10
+Evidence: [linting enforcement, DI pattern, god classes]
 
-**CI/CD maturity:** [Full pipeline / Basic CI / Missing]
-Evidence: [pipeline stages found]
+**Dependencies:** [N]/10
+Evidence: [versions, BOM status, SBOM, cross-module mismatches]
 
-**Security:** [Enforced / Basic / Missing]
-Evidence: [security framework, method-level auth, CORS config, auth coverage gap]
+**CI/CD:** [N]/10
+Evidence: [pipeline stages, quality gates]
 
-**Observability:** [Good / Acceptable / Debt]
+**Documentation:** [N]/10
+Evidence: [README, CLAUDE.md, ADRs]
+
+**Security:** [N]/10
+Evidence: [security framework, method-level auth, CORS config, auth coverage]
+
+**Observability:** [N]/10
 Evidence: [actuator, metrics, tracing, structured logging]
+
+**Quality Score Summary:**
+
+| Dimension | Score | Evidence |
+|-----------|-------|----------|
+| Testing | [N]/10 | [1-line] |
+| Architecture | [N]/10 | [1-line] |
+| Conventions | [N]/10 | [1-line] |
+| Dependencies | [N]/10 | [1-line] |
+| CI/CD | [N]/10 | [1-line] |
+| Documentation | [N]/10 | [1-line] |
+| Security | [N]/10 | [1-line] |
+| Observability | [N]/10 | [1-line] |
+| **Average** | **[X.X]/10** | |
+
+**Adaptive Depth Decision:** [≥7.0 avg] → Full rules | [4.0-6.9 avg] → Medium rules | [<4.0 avg] → Skeleton rules
 
 **API Surface:**
 - Controllers: N | Endpoints: ~M (GET:X POST:Y PUT:Z DELETE:W)

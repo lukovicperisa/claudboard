@@ -565,25 +565,30 @@ Load `../claudboard/references/pattern-catalog.md` to identify architecture patt
 
 ### Quality Assessment
 
-**Architecture maturity:** [Established / Transitional / Ad-hoc]
-Evidence: [1 sentence]
+Score each dimension 1-10 (whole numbers only) using criteria from `../claudboard/references/quality-signals.md`.
 
-**Testing coverage:** [Comprehensive / Basic / Missing]
+**Testing:** [N]/10
 Evidence: [framework, CI gate, coverage %]
 
-**Convention consistency:** [Enforced / Mostly consistent / Inconsistent]
-Evidence: [linting, DI pattern, logging style, error handling strategy]
+**Architecture:** [N]/10
+Evidence: [pattern name, consistency]
 
-**Dependency health:** [Current / Minor debt / Major debt]
+**Conventions:** [N]/10
+Evidence: [linting enforcement, DI pattern, god classes, anti-patterns]
+
+**Dependencies:** [N]/10
 Evidence: [versions, BOM status, SBOM, cross-module mismatches]
 
-**CI/CD maturity:** [Full pipeline / Basic CI / Missing]
-Evidence: [pipeline stages]
+**CI/CD:** [N]/10
+Evidence: [pipeline stages, quality gates, deploy automation]
 
-**Security:** [Enforced / Basic / Missing]
-Evidence: [framework, method-level auth, CORS, auth coverage gap]
+**Documentation:** [N]/10
+Evidence: [README, CLAUDE.md, ADRs, inline docs]
 
-**Observability:** [Good / Acceptable / Debt]
+**Security:** [N]/10
+Evidence: [framework, method-level auth coverage, CORS, secrets]
+
+**Observability:** [N]/10
 Evidence: [actuator, metrics, tracing, structured logging]
 
 **API Surface:**
@@ -596,18 +601,19 @@ Evidence: [actuator, metrics, tracing, structured logging]
 
 **Quality Score Summary:**
 
-| Dimension | Rating |
-|-----------|--------|
-| Architecture | [Established / Transitional / Ad-hoc] |
-| Testing | [Comprehensive / Basic / Missing] |
-| Conventions | [Enforced / Mostly consistent / Inconsistent] |
-| Dependencies | [Current / Minor debt / Major debt] |
-| CI/CD | [Full pipeline / Basic CI / Missing] |
-| Security | [Enforced / Basic / Missing] |
-| Observability | [Good / Acceptable / Debt] |
-| Documentation | [Complete / Basic / Missing] |
+| Dimension | Score | Evidence |
+|-----------|-------|----------|
+| Testing | [N]/10 | [1-line] |
+| Architecture | [N]/10 | [1-line] |
+| Conventions | [N]/10 | [1-line] |
+| Dependencies | [N]/10 | [1-line] |
+| CI/CD | [N]/10 | [1-line] |
+| Documentation | [N]/10 | [1-line] |
+| Security | [N]/10 | [1-line] |
+| Observability | [N]/10 | [1-line] |
+| **Average** | **[X.X]/10** | |
 
-**Adaptive Depth Decision:** [4+ Good] → Full rules | [2-3 Good] → Medium rules | [<2 Good] → Skeleton rules
+**Adaptive Depth Decision:** [≥7.0 avg] → Full rules | [4.0-6.9 avg] → Medium rules | [<4.0 avg] → Skeleton rules
 
 **Preserve:**
 - <good pattern> — <where found>
@@ -710,12 +716,12 @@ For monorepos, produce **two levels** of report content:
 
 ### Per-Service Summary
 
-| Service | Architecture | Testing | Conventions | Quality |
-|---------|-------------|---------|-------------|---------|
-| <name> | [Established/Transitional/Ad-hoc] | [Comprehensive/Basic/Missing] | [Enforced/...] | [N/8 Good] |
+| Service | Testing | Architecture | Conventions | Avg Score |
+|---------|---------|--------------|-------------|-----------|
+| <name> | [N]/10 | [N]/10 | [N]/10 | [X.X]/10 |
 
-**Quality variance:** [e.g., "Testing: 2/3 services Comprehensive, 1/3 Basic — variance noted"]
-**Adaptive Depth:** [determined per service — see per-service reports]
+**Quality variance:** [e.g., "Testing: 2/3 services scored 7+, 1/3 scored 4-6 — variance noted"]
+**Adaptive Depth:** [determined per service from average scores — see per-service reports]
 
 ### Global Watch
 - [SEVERITY] <cross-service anti-pattern> — <evidence>
@@ -736,9 +742,11 @@ For monorepos, produce **two levels** of report content:
 <stack, key dependencies, detected versions>
 
 ### Quality Assessment
-[Same 8-dimension table as single-project, scoped to this service]
+[Same 1-10 scoring table as single-project, scoped to this service]
 
-**Adaptive Depth Decision:** [per-service decision]
+**Average:** [X.X]/10
+
+**Adaptive Depth Decision:** [≥7.0] → Full | [4.0-6.9] → Medium | [<4.0] → Skeleton
 
 ### Preserve / Watch
 [Same format as single-project, scoped to this service]
