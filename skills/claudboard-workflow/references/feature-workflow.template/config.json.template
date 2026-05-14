@@ -1,0 +1,47 @@
+{
+<!-- IF JIRA_AVAILABLE -->
+  "jira": {
+    "cloudId": "{{JIRA_CLOUD_ID}}",
+    "projectKey": "{{TICKET_PREFIX}}",
+    "urlBase": "{{JIRA_URL_BASE}}",
+    "customFields": {
+      "sprint": "customfield_10001",
+      "acceptanceCriteria": "customfield_12206"
+    },
+    "transitions": {
+      "start":   "{{JIRA_TRANSITION_START}}",
+      "success": "{{JIRA_TRANSITION_SUCCESS}}",
+      "failure": "{{JIRA_TRANSITION_FAILURE}}",
+      "pause":   null // RESERVED FOR FUTURE USE — no v1 command fires this transition
+    },
+    "labels": {
+      "ai": ["AI", "AI_CLI"],
+<!-- IF JIRA_AREA_LABELS -->
+      "area": {
+        "backend":  "{{JIRA_LABELS_AREA_BACKEND}}",
+        "frontend": "{{JIRA_LABELS_AREA_FRONTEND}}",
+        "devops":   "{{JIRA_LABELS_AREA_DEVOPS}}",
+        "docs":     "{{JIRA_LABELS_AREA_DOCS}}"
+      },
+<!-- ELSE -->
+      "area": null,
+<!-- ENDIF -->
+      "preserveExisting": true
+    }
+  },
+<!-- ENDIF -->
+<!-- IF ADO_AVAILABLE -->
+  "azureDevOps": {
+    "organization": "{{ADO_ORGANIZATION}}",
+    "project": "{{ADO_PROJECT}}",
+    "repositoryId": "{{ADO_REPOSITORY_ID}}"
+  },
+<!-- ENDIF -->
+  "git": {
+    "branchTypes": ["feature", "bugfix", "hotfix"],
+    "branchPattern": "{{GIT_BRANCH_PATTERN}}",
+    "ticketRegex": "[A-Z]+-[0-9]+"
+  }<!-- IF WORKSPACE_MODE -->,
+  "repos": {{REPOS_MAP_JSON}}
+<!-- ENDIF -->
+}

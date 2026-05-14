@@ -1,0 +1,1576 @@
+---
+name: feature-workflow
+model: claude-sonnet-4-6
+description: >
+  Kick off intentional feature work with the full ticketed workflow: clarify
+  scope, create a goal-oriented JIRA ticket, set up the branch, develop the
+  solution, commit, and open a PR. Use this skill when the user says
+  "start feature: X", "start a feature", "kick off work on X", or "full
+  workflow for X". This is a deliberate mode the user enters — do NOT
+  trigger for casual coding requests, experiments, spikes, or when the user
+  just asks to "add X" or "implement X" without explicit feature framing.
+  The phrase "start feature" is the signal.
+---
+
+# Start Feature Workflow
+
+This skill orchestrates the full lifecycle of intentional feature work:
+ticket → clarify → specify → plan → branch → develop → test → commit → review → PR → finalize.
+
+It is designed to be entered deliberately. Experiments and spikes skip this
+entirely — the user just codes. This workflow is for work that deserves a
+<!-- IF JIRA_AVAILABLE -->
+JIRA ticket, a clean branch, and a PR.
+
+**There is exactly one human gate: spec and plan approval in Phase 1.** After
+that, all phases run autonomously.
+<!-- ENDIF -->
+
+## Project configuration
+
+<!-- IF JIRA_AVAILABLE -->
+JIRA, Azure DevOps, and git conventions are externalized to
+`.claude/skills/feature-workflow/config.json`. Sub-agents read it directly.
+Before Phase 1-pre, verify the config is present and parseable:
+<!-- ENDIF -->
+
+```
+Tool: Read
+file_path: .claude/skills/feature-workflow/config.json
+```
+
+Hold these values for use in Phase 1-pre and beyond:
+<!-- IF JIRA_AVAILABLE -->
+- `<projectKey>` ← `jira.projectKey`
+- `<urlBase>` ← `jira.urlBase`
+- `<transitions>` ← `jira.transitions` (object: start, success, failure, pause)
+- `<aiLabels>` ← `jira.labels.ai` (array, e.g., `["AI", "AI_CLI"]`)
+- `<areaLabels>` ← `jira.labels.area` (null or per-area object)
+<!-- ENDIF -->
+- `<branchTypes>` ← `git.branchTypes` (array, e.g., `["feature","bugfix","hotfix"]`)
+- `<branchPattern>` ← `git.branchPattern` (template, e.g., `"{type}/{ticket}/{slug}"`)
+
+If the config is missing or invalid, stop and ask the user to populate it
+before continuing — the workflow cannot create tickets or PRs without it.
+
+<!-- IF WORKSPACE_MODE -->
+### Workspace configuration
+
+In workspace mode, `config.json` also contains a `repos` map. Each key is a
+repo name (matching the directory name under the workspace root); each value
+provides the per-repo Azure DevOps `repositoryId` and any repo-local overrides.
+
+```json
+{
+  "jira": { ... },
+  "azureDevOps": { "organization": "...", "project": "..." },
+  "git": { ... },
+  "repos": {
+    "meas.cloud.common-dto":   { "azureDevOps": { "repositoryId": "..." } },
+    "meas.cloud.datahandler":  { "azureDevOps": { "repositoryId": "..." } },
+    "meas.cloud.controller":   { "azureDevOps": { "repositoryId": "..." } }
+  }
+}
+```
+
+Hold `config.repos` throughout the workflow. When spawning repo-scoped
+sub-agents, look up the `repositoryId` from `config.repos[repoName]`.
+
+Also hold `<workspaceRoot>` = the parent directory of the config file's
+`.claude/skills/feature-workflow/config.json` chain (the symlinked workspace
+root, not the meta-repo path).
+<!-- ENDIF -->
+
+<!-- IF JIRA_AVAILABLE -->
+### Area-label resolution
+
+When computing labels, resolve the area label for the current work type as follows:
+
+1. If `<areaLabels>` is `null` → no area label (skip)
+2. If `<areaLabels>` is an object → look up the work area (`backend`/`frontend`/`devops`/`docs`) → use the value if non-null, skip if null
+
+```
+resolveAreaLabel(area, areaLabels):
+  if areaLabels is null → return null
+  value = areaLabels[area]
+  if value is null or undefined → return null
+  return value
+```
+
+The merged label list for any ticket is:
+```
+mergeLabels(existingLabels, aiLabels, resolvedAreaLabel):
+  union = set(existingLabels) ∪ set(aiLabels)
+  if resolvedAreaLabel is not null: union.add(resolvedAreaLabel)
+  return Array.from(union)
+```
+
+Always compute this in the orchestrator — never delegate label math to jira-agent.
+<!-- ENDIF -->
+
+The main branch (`main` vs `master`) is auto-detected at runtime by the
+git-agent and the `prepare-*.sh` scripts via
+`.claude/skills/feature-workflow/scripts/lib.sh` — no config entry needed.
+
+## Agent architecture
+
+Specialized work — BDD specification, architecture planning, JIRA ticket
+management, and PR creation — runs as scoped sub-agents via the `Agent` tool.
+Each sub-agent receives only the tools it needs and a self-contained prompt;
+it returns a small JSON result block that the main agent uses to continue.
+
+- **sdd-expert-agent** — domain expert in BDD specifications, writes
+  exhaustive Gherkin specs using actor/action/outcome pattern
+- **architect-agent** — expert in high-level architecture, software
+  contracts (OpenAPI, DB entities, repository ports, DTOs, commands), and
+  precise task decomposition into checkpoint-based execution plans
+<!-- IF JIRA_AVAILABLE -->
+- **jira-agent** — manages JIRA tickets: creation with AI labels, description
+  updates, status transitions, work logging, and comments
+<!-- ENDIF -->
+<!-- IF ADO_AVAILABLE -->
+- **pr-agent** — creates Azure DevOps pull requests
+<!-- ENDIF -->
+- **spec-reviewer** — verifies implementation matches BDD spec scenarios
+- **design-reviewer** — verifies code quality against repo standards and rules
+- **git-agent** — handles all git repository operations: branch creation,
+  staging, committing, squashing, amending, syncing, and pushing
+- **implementation-agent** — implements code changes: baseline verification,
+  checkpoint-by-checkpoint development with build/test/lint/live-test loops,
+  and review fix application
+
+The main agent's job is to orchestrate: spawn sub-agents, pass context, and
+route results. It does not touch Atlassian or Azure DevOps MCP tools
+directly — those belong to the sub-agents. It does not write code, run
+builds, or execute tests — that belongs to the implementation-agent.
+
+<!-- IF WORKSPACE_MODE -->
+### Workspace mode: per-repo agent contract
+
+Every code-touching sub-agent (architect-agent, implementation-agent,
+design-reviewer, spec-reviewer) receives a `repo` argument identifying which
+workspace repo it should operate in. Git and PR agents also receive `repo`.
+
+The orchestrator always passes `repo: "<repoName>"` in each agent's INPUT
+CONTEXT, and the agent operates exclusively in `<workspaceRoot>/<repo>/`.
+
+**Per-repo context loading is mandatory.** Before doing any planning or
+coding work in repo R, every code-touching agent MUST call:
+
+```bash
+bash .claude/skills/feature-workflow/scripts/load-repo-context.sh "<repoName>"
+```
+
+This script reads R's `.claude/CLAUDE.md`, `.claude/rules/*.md`,
+`.claude/memory/MEMORY.md`, and all `.claude/skills/*/SKILL.md` files (except
+`feature-workflow/`, which no longer exists per-repo). The agent treats the
+output as authoritative conventions for that repo.
+<!-- ENDIF -->
+
+```
+Main agent (Sonnet 4.6)
+├── Phase 1: Ticket, clarify, specify, plan
+<!-- IF JIRA_AVAILABLE -->
+│   ├── 1-pre. Create JIRA ticket      → spawn jira-agent (create) → {ticketKey}
+│   │         Record WORKFLOW_START timestamp
+<!-- ENDIF -->
+│   ├── 1a. Clarify scope              (main — conversation)
+<!-- IF JIRA_AVAILABLE -->
+│   │         → spawn jira-agent (updateDescription)
+<!-- ENDIF -->
+│   ├── 1b. Create BDD spec            → spawn sdd-expert-agent → {specFiles}
+│   ├── 1c. Execution plan             → spawn architect-agent  → {planPath}
+│   ├── 1d. User gate                  (user confirms spec + plan)
+<!-- IF JIRA_AVAILABLE -->
+│   │         → spawn jira-agent (addWorklog — "Requirement refinement work")
+│   │         Record CHECKPOINT timestamp
+<!-- ENDIF -->
+├── Phase 2: Create branch             → spawn git-agent (create-branch)
+├── Phase 3: Develop and test
+│   ├── 3a. Baseline + checkpoint 1    IN PARALLEL (both run_in_background)
+│   │   ├── spawn implementation-agent (baseline)
+│   │   └── spawn implementation-agent (checkpoint 1)
+│   │   If baseline fails: STOP workflow
+│   └── 3b. Remaining checkpoints      → spawn implementation-agent (checkpoint N)
+├── Phase 4: Commit                    → spawn git-agent (count-commits, squash, stage-and-prepare, commit)
+├── Phase 5: Review
+│   ├── 5a. Spec review               → spawn spec-reviewer    → {passed, findings}
+│   │         If failed: spawn implementation-agent (fix-findings)
+│   │                    → spawn git-agent (amend) → re-spawn spec-reviewer
+│   └── 5b. Design review             → spawn design-reviewer  → {passed, findings}
+│             If failed: spawn implementation-agent (fix-findings)
+│                        → spawn git-agent (amend) → re-spawn design-reviewer
+<!-- IF ADO_AVAILABLE -->
+├── Phase 6: PR creation
+│   ├── spawn git-agent (validate-pr-readiness, sync-and-push)
+│   └── spawn pr-agent                                         → {prUrl}
+<!-- ENDIF -->
+<!-- IF JIRA_AVAILABLE -->
+└── Phase 7: Finalize JIRA             → spawn jira-agent (composite)
+              ├── addWorklog — "Implementation work"
+              ├── addComment — cost analysis with per-agent breakdown
+              └── transition → success
+<!-- ENDIF -->
+```
+
+<!-- IF WORKSPACE_MODE -->
+```
+Workspace-mode orchestration (N repos)
+├── Phase 1: Ticket, clarify, specify, affected_repos, plan
+│   ├── 1-pre. Create JIRA ticket (single ticket for whole feature)
+│   ├── 1a. Clarify scope
+│   ├── 1b. Create BDD spec            → spawn sdd-expert-agent
+│   ├── 1c. Affected repos inference   → spawn architect-agent
+│   │         surface inferred list to user: "Detected X, Y, Z — confirm?"
+│   │         user adjusts if needed
+│   ├── 1d. Execution plan             → spawn architect-agent (per-repo slices)
+│   │         writes: .claude/changes/<TICKET>/{plan.md, slices/<repo>.md ...}
+│   └── 1e. User gate                  (user confirms spec + plan slices)
+├── Phase 2: for repo in affected_repos: git-agent create-branch
+│             same branch name pattern in every repo
+├── Phase 3: for repo in implementation_order (from plan):
+│               load-repo-context.sh <repo>
+│               → spawn implementation-agent (repo=<repo>, checkpoints)
+├── Phase 4: for repo in affected_repos:
+│               → spawn git-agent (repo=<repo>, squash+commit)
+├── Phase 5: for repo in affected_repos:
+│               → spawn spec-reviewer (repo=<repo>)
+│               → spawn design-reviewer (repo=<repo>)
+├── Phase 6: for repo in affected_repos (IN PARALLEL):
+│               → spawn git-agent (repo=<repo>, sync-and-push)
+│               → spawn pr-agent (repo=<repo>, repositoryId from config)
+│             collect all prUrls, print recommended merge order
+└── Phase 7: jira-agent aggregated worklog (single ticket, all repos listed)
+```
+
+**Per-feature artifact placement:**
+Phase 1 outputs (spec, master plan, per-repo slices) are written to
+`.claude/changes/<ticketKey>/` in the workspace root (resolves through the
+meta-repo symlink — these files are automatically version-controlled):
+
+```
+.claude/changes/<TICKET>/
+├── plan.md          ← master plan (affected repos, implementation order, PR merge order)
+└── slices/
+    ├── common-dto.md
+    ├── datahandler.md
+    └── controller.md
+```
+<!-- ENDIF -->
+
+---
+
+## Error handling
+
+<!-- IF JIRA_AVAILABLE -->
+The workflow is wrapped in a top-level error handler. Treat failures as
+either **recoverable** (handled inside the iterate loop, do NOT touch ticket
+status) or **non-recoverable** (must surface error and halt; fire
+`failure_transition` if configured).
+
+| Category | Examples |
+|----------|----------|
+| **Non-recoverable** | Atlassian MCP unavailable; configured transition name not found in available transitions; ticket not found; network errors after retry; unhandled exception from any sub-agent |
+| **Recoverable** | Test failures; lint failures; design review pushback; spec review pushback; build failures |
+
+Recoverable failures stay inside the existing iterate loops in Phases 3 and
+5 — they do NOT bubble up to this error handler and do NOT touch ticket status.
+
+On a non-recoverable failure:
+
+1. If `<transitions>.failure` is non-null, invoke jira-agent to signal the failure:
+
+```
+Tool: Agent
+Parameters:
+  prompt: |
+    <paste the full contents of jira-agent.md as instructions>
+
+    INPUT CONTEXT:
+    {
+      "action": "transition",
+      "ticketKey": "<ticketKey>",
+      "lifecycleState": "failure"
+    }
+  allowedTools:
+    - mcp__atlassian__getTransitionsForJiraIssue
+    - mcp__atlassian__transitionJiraIssue
+```
+
+2. Always surface the original error message to the user (include the error
+   details and, for transition misses, the list of available transitions).
+3. Always halt — do not attempt to continue the workflow.
+
+If `<transitions>.failure` is `null`: skip step 1 but still surface the
+error and halt.
+
+<!-- ENDIF -->
+
+---
+
+## Phase 1: Ticket, clarify, specify, and plan
+
+This phase creates the JIRA ticket immediately, then produces two
+deliverables before any code is written: a complete BDD specification and
+a detailed technical execution plan. Both live in the `specs/` directory
+and are committed with the feature — they are code, not throwaway notes.
+
+### Time tracking
+
+Record the workflow start time at the very beginning of Phase 1. This is
+used to calculate work log durations later.
+
+```bash
+WORKFLOW_START=$(date +%s)
+```
+
+Hold this value throughout the workflow. After Phase 1d, calculate the
+elapsed time and log it. Record a second timestamp (`CHECKPOINT`) to
+measure the implementation phase separately.
+
+<!-- IF JIRA_AVAILABLE -->
+### 1-pre. Ticket setup
+
+Read the agent instructions from
+`.claude/skills/feature-workflow/agents/jira-agent.md` once and reuse
+for all JIRA spawns in Phase 1.
+
+---
+
+**Path A — user provided a JIRA ticket key:**
+
+The ticket already exists. Infer the work area from the user's request
+(`backend` | `frontend` | `devops` | `docs`) and hold it as `<area>`.
+
+Delegate to the JIRA sub-agent to prepare the ticket (transition to start
+state, sprint, assign) and return the current label set:
+
+```
+Tool: Agent
+Parameters:
+  prompt: |
+    <paste the full contents of jira-agent.md as instructions>
+
+    INPUT CONTEXT:
+    {
+      "action": "fetchAndPrepare",
+      "ticketKey": "<ticket key from user>"
+    }
+  allowedTools:
+    - mcp__atlassian__searchJiraIssuesUsingJql
+    - mcp__atlassian__getJiraIssue
+    - mcp__atlassian__getTransitionsForJiraIssue
+    - mcp__atlassian__transitionJiraIssue
+    - mcp__atlassian__editJiraIssue
+    - mcp__atlassian__atlassianUserInfo
+```
+
+The agent will emit a JSON result block. Extract and hold:
+
+```json
+{
+  "action": "fetchAndPrepare",
+  "ticketKey": "<projectKey>-XXXXX",
+  "ticketUrl": "<urlBase>/browse/<projectKey>-XXXXX",
+  "existingDescription": true,
+  "existingLabels": ["Collaboration"],
+  "currentStatus": "<current Jira status>"
+}
+```
+
+Hold `existingDescription` — it determines whether the description is
+updated after scope clarification (1a).
+
+**Compute and apply labels (Path A):**
+
+Using the area-label resolution and merge helpers from the Project
+configuration section above:
+
+1. `resolvedAreaLabel = resolveAreaLabel(<area>, <areaLabels>)`
+2. `mergedLabels = mergeLabels(existingLabels, <aiLabels>, resolvedAreaLabel)`
+3. Apply merged labels via the JIRA sub-agent:
+
+```
+Tool: Agent
+Parameters:
+  prompt: |
+    <paste the full contents of jira-agent.md as instructions>
+
+    INPUT CONTEXT:
+    {
+      "action": "applyLabels",
+      "ticketKey": "<ticketKey>",
+      "labels": <mergedLabels array>
+    }
+  allowedTools:
+    - mcp__atlassian__editJiraIssue
+```
+
+Tell the user the ticket URL, then proceed to 1a.
+
+---
+
+**Path B — no ticket provided:**
+
+Create a new ticket. Before spawning the agent, classify the user's
+initial request:
+
+**Issue type — Task vs Story:**
+- `"Task"` — purely technical/internal work: refactoring, tech debt,
+  dependency upgrade, config change, internal tooling, removing dead
+  code, migration, performance optimization, fixing code quality
+- `"Story"` — new feature, change request, user-facing behavior change,
+  new API endpoint, new UI component, business rule change
+
+**Priority — infer from tone and wording:**
+- `"Critical"` — words like "critical", "urgent", "production down",
+  "hotfix", "breaking", "blocker"
+- `"High"` — words like "important", "needed urgently", "ASAP",
+  "high priority", "blocking other work"
+- `"Medium"` — default for neutral requests, or words like "should",
+  "needed", "please add"
+- `"Low"` — words like "could", "nice to have", "eventually",
+  "when possible", "potential", "consider", "minor"
+
+Infer the work area from the user's request (`backend` | `frontend` |
+`devops` | `docs`) and hold it as `<area>`.
+
+**Compute labels (Path B):** New tickets have no existing labels.
+
+1. `resolvedAreaLabel = resolveAreaLabel(<area>, <areaLabels>)`
+2. `createLabels = mergeLabels([], <aiLabels>, resolvedAreaLabel)`
+
+Delegate to the JIRA sub-agent, passing the pre-computed labels:
+
+```
+Tool: Agent
+Parameters:
+  prompt: |
+    <paste the full contents of jira-agent.md as instructions>
+
+    INPUT CONTEXT:
+    {
+      "action": "create",
+      "scope": "<initial description from user's request — use as-is, even if brief>",
+      "area": "<backend | frontend | devops | docs — infer from user's request>",
+      "issueType": "<Task | Story — from classification above>",
+      "priority": "<Critical | High | Medium | Low — from classification above>",
+      "acceptanceCriteria": [
+        "<derive what you can from the initial request — even if minimal>"
+      ],
+      "context": "<any background the user mentioned>",
+      "labels": <createLabels array computed above>
+    }
+  allowedTools:
+    - mcp__atlassian__searchJiraIssuesUsingJql
+    - mcp__atlassian__createJiraIssue
+    - mcp__atlassian__getTransitionsForJiraIssue
+    - mcp__atlassian__transitionJiraIssue
+    - mcp__atlassian__editJiraIssue
+    - mcp__atlassian__atlassianUserInfo
+```
+
+The agent will emit a JSON result block. Extract and hold:
+
+```json
+{
+  "action": "create",
+  "ticketKey": "<projectKey>-XXXXX",
+  "ticketUrl": "<urlBase>/browse/<projectKey>-XXXXX"
+}
+```
+
+For newly created tickets, set `existingDescription` to `false` (the
+description will always be refined after clarification).
+
+Tell the user the ticket URL, then proceed to 1a.
+<!-- ENDIF -->
+
+### 1a. Clarify scope
+
+Ask targeted questions until every aspect of the feature is understood. You
+are building the foundation for an exhaustive spec, so do not leave
+ambiguities — dig until the picture is complete.
+
+Things worth clarifying:
+- Which {{REPO_OR_SERVICE_LABEL}} is this for?
+- Is there a user-facing impact, or is it internal/infra?
+- Any known constraints or related tickets?
+- Who are the actors? What are their roles and permissions?
+- What are the error and edge cases?
+- Are there authorization requirements?
+- Are there event/integration boundaries (e.g., cross-service calls)?
+- What validation rules apply to inputs?
+{{STACK_REMINDERS}}
+
+**After scope is fully clarified**, update the JIRA ticket description —
+but only if it needs updating:
+
+- **Newly created ticket** (`existingDescription` is `false`): always
+  update — refine the initial description with the fully clarified scope.
+- **Existing ticket with thin/missing description** (`existingDescription`
+  is `false`): update with the clarified scope.
+- **Existing ticket with well-populated description** (`existingDescription`
+  is `true`): skip the description update — the ticket is already
+  well-described.
+
+<!-- IF JIRA_AVAILABLE -->
+When updating, compose a description using the ticket description template
+(Goal / Acceptance Criteria / Context) populated with the clarified scope,
+then delegate to the JIRA sub-agent:
+
+```
+Tool: Agent
+Parameters:
+  prompt: |
+    <paste the full contents of jira-agent.md as instructions>
+
+    INPUT CONTEXT:
+    {
+      "action": "updateDescription",
+      "ticketKey": "<ticketKey from 1-pre>",
+      "description": "<updated markdown description using the Goal / Acceptance Criteria / Context template, populated with the fully clarified scope>"
+    }
+  allowedTools:
+    - mcp__atlassian__editJiraIssue
+```
+<!-- ENDIF -->
+
+<!-- IF WORKSPACE_MODE -->
+### 1a-ws. Affected repos inference and confirmation
+
+After scope is clarified but before writing the BDD spec, the architect-agent
+must infer which repos are affected. Delegate to the architect-agent:
+
+```
+Tool: Agent
+Parameters:
+  prompt: |
+    <paste the full contents of architect-agent.md as instructions>
+
+    INPUT CONTEXT:
+    {
+      "action": "infer-affected-repos",
+      "scope": "<clarified scope from 1a>",
+      "workspaceRoot": "<workspaceRoot>",
+      "availableRepos": <Object.keys(config.repos)>,
+      "analysisReportsDir": ".claude/reports/"
+    }
+  allowedTools:
+    - Read
+    - Bash
+```
+
+The agent reads each repo's analysis report at
+`.claude/reports/claudboard-analysis-<repo>.md` (and ecosystem coupling rules
+at `.claude/rules/`) to infer which repos are touched. It returns:
+
+```json
+{
+  "action": "infer-affected-repos",
+  "affectedRepos": ["common-dto", "datahandler", "controller"],
+  "justifications": {
+    "common-dto": "Spec mentions a new DTO field — schema source lives here.",
+    "datahandler": "Persists the new field to MongoDB.",
+    "controller": "Exposes the new field via REST."
+  },
+  "implementationOrder": ["common-dto", "datahandler", "controller"],
+  "prMergeOrder": ["common-dto", "datahandler", "controller"],
+  "prMergeRationale": "common-dto first (consumers need published artifact); datahandler + controller parallel; no web-ui changes."
+}
+```
+
+**Present to the user:**
+
+```
+Detected affected repos:
+  • common-dto    — Spec mentions a new DTO field — schema source lives here.
+  • datahandler   — Persists the new field to MongoDB.
+  • controller    — Exposes the new field via REST.
+
+Confirm or adjust? [confirm / add <repo> / remove <repo>]
+```
+
+Hold `affectedRepos`, `implementationOrder`, and `prMergeOrder` for all
+subsequent phases. If the user adjusts the list, re-spawn the architect-agent
+with `action: "infer-affected-repos"` and the adjusted `affectedRepos` to
+update the justifications and ordering.
+<!-- ENDIF -->
+
+### 1b. Create the BDD spec
+
+Once scope is fully clear, determine the spec directory, then delegate to
+the SDD Expert sub-agent.
+
+**Directory naming:**
+
+Determine the next sequence number by inspecting existing directories:
+
+```bash
+ls -d specs/[0-9]* 2>/dev/null | sort -n | tail -1
+```
+
+If none exist, start at `001`. Otherwise increment the highest number by 1,
+zero-padded to 3 digits. Use `ticketKey` from Phase 1-pre. The directory
+name follows this pattern:
+
+```
+specs/<NNN>-<TICKET>-<short-slug>/
+```
+
+Example: `specs/001-{{TICKET_PREFIX}}-12345-short-description/`
+
+**Delegate to sdd-expert-agent:**
+
+Read the agent instructions from
+`.claude/skills/feature-workflow/agents/sdd-expert-agent.md`, then spawn
+the agent:
+
+```
+Tool: Agent
+Parameters:
+  prompt: |
+    <paste the full contents of sdd-expert-agent.md as instructions>
+
+    INPUT CONTEXT:
+    {
+      "scope": "<clarified scope from 1a>",
+      "specDir": "specs/<NNN>-<TICKET>-<slug>/",
+      "service": "<{{REPO_OR_SERVICE_LABEL}} name and path>",
+      "actors": ["<actor 1 and role>", "<actor 2 and role>"],
+      "constraints": "<known constraints, related tickets, edge cases>",
+      "area": "<BE | FE | DevOps | Docs>"
+    }
+```
+
+The agent will emit a JSON result block. Extract and hold for Phase 1c:
+
+```json
+{
+  "specDir": "specs/001-{{TICKET_PREFIX}}-12345-short-description/",
+  "specFiles": ["business-behavior-spec.md", "authorization-spec.md"],
+  "scenarioCount": 15,
+  "concerns": ["business-behavior", "authorization"],
+  "openQuestions": []
+}
+```
+
+If `openQuestions` is non-empty, present them to the user and resolve
+before proceeding. Do not continue to 1c with unresolved ambiguities.
+
+### 1c. Create the technical execution plan
+
+After the spec is complete, delegate to the Architect sub-agent to produce
+the execution plan.
+
+**Delegate to architect-agent:**
+
+Read the agent instructions from
+`.claude/skills/feature-workflow/agents/architect-agent.md`, then spawn
+the agent:
+
+```
+Tool: Agent
+Parameters:
+  prompt: |
+    <paste the full contents of architect-agent.md as instructions>
+
+    INPUT CONTEXT:
+    {
+      "specDir": "specs/<NNN>-<TICKET>-<slug>/",
+      "service": "<{{REPO_OR_SERVICE_LABEL}} name and path>",
+      "area": "<BE | FE | DevOps | Docs>",
+      "specFiles": <specFiles array from sdd-expert-agent result>
+    }
+```
+
+The agent will emit a JSON result block:
+
+```json
+{
+  "planPath": "specs/001-{{TICKET_PREFIX}}-12345-short-description/execution-plan.md",
+  "checkpointCount": 4,
+  "taskCount": 12,
+  "layersAffected": ["domain", "application", "adapter-in", "adapter-out"],
+  "contractsDefined": ["rest-api", "domain-model", "db-entity", "repository-port", "command", "authorization"],
+  "risks": []
+}
+```
+
+If `risks` is non-empty, include them in the gate presentation (1d) so the
+user can acknowledge or resolve them.
+
+<!-- IF WORKSPACE_MODE -->
+### 1c-ws. Per-repo plan slices
+
+After the execution plan is complete, the architect-agent also writes per-repo
+plan slices to `.claude/changes/<ticketKey>/slices/<repo>.md` for each
+affected repo. The master plan at `.claude/changes/<ticketKey>/plan.md`
+includes the Affected repos list and the Recommended PR merge order.
+
+If the architect-agent did not produce slices in Phase 1c, spawn it again:
+
+```
+Tool: Agent
+Parameters:
+  prompt: |
+    <paste the full contents of architect-agent.md as instructions>
+
+    INPUT CONTEXT:
+    {
+      "action": "write-plan-slices",
+      "ticketKey": "<ticketKey>",
+      "affectedRepos": <affectedRepos>,
+      "implementationOrder": <implementationOrder>,
+      "prMergeOrder": <prMergeOrder>,
+      "prMergeRationale": "<prMergeRationale>",
+      "masterPlanPath": ".claude/changes/<ticketKey>/plan.md",
+      "slicesDir": ".claude/changes/<ticketKey>/slices/"
+    }
+  allowedTools:
+    - Read
+    - Write
+    - Bash
+```
+<!-- ENDIF -->
+
+### 1d. Gate — user reviews spec and plan
+
+Present the spec files and execution plan to the user. This is the **only
+human gate** in the workflow. Specifically ask:
+
+- Does the spec cover all scenarios?
+- Are the software contracts (API shape, DB entities, permissions) correct?
+- Is the execution plan's checkpoint ordering and scope correct?
+- Any missing edge cases or concerns?
+
+**After the user confirms**, log the requirement refinement work and record
+the checkpoint timestamp before proceeding autonomously.
+
+Calculate elapsed time since workflow start:
+
+```bash
+PHASE1_END=$(date +%s)
+ELAPSED_SECONDS=$((PHASE1_END - WORKFLOW_START))
+```
+
+Convert `ELAPSED_SECONDS` to JIRA time format (e.g., `"1h 30m"`, `"45m"`,
+`"2h"`). Round to the nearest 5 minutes. Use hours and minutes — do not
+use seconds or days.
+
+<!-- IF JIRA_AVAILABLE -->
+Delegate to the JIRA sub-agent to log the work:
+
+```
+Tool: Agent
+Parameters:
+  prompt: |
+    <paste the full contents of jira-agent.md as instructions>
+
+    INPUT CONTEXT:
+    {
+      "action": "addWorklog",
+      "ticketKey": "<ticketKey>",
+      "timeSpent": "<elapsed time in JIRA format — e.g., 1h 30m>",
+      "comment": "Requirement refinement work"
+    }
+  allowedTools:
+    - mcp__atlassian__addWorklogToJiraIssue
+```
+
+Record the checkpoint timestamp for Phase 7:
+
+```bash
+CHECKPOINT=$(date +%s)
+```
+<!-- ENDIF -->
+
+Once confirmed and worklog is recorded, execute Phases 2–7 autonomously
+without pausing.
+
+---
+
+## Phase 2: Create branch
+
+<!-- IF WORKSPACE_MODE -->
+**Workspace mode:** Create the same branch in every affected repo. The branch
+name pattern is the same for all repos — use the same `ticketKey` and `slug`.
+
+For each `repo` in `affectedRepos`, spawn git-agent with `repo: <repo>` in
+the INPUT CONTEXT. The agent runs all git commands via
+`(cd <workspaceRoot>/<repo> && ...)`.
+
+Spawn git-agents for all repos in a single message with
+`run_in_background: true` to create branches in parallel. Wait for all to
+complete before proceeding to Phase 3.
+<!-- ENDIF -->
+
+Use `ticketKey` from Phase 1. Derive a short kebab-case slug from the
+ticket summary (3-5 words, no area prefix). Do not ask the user.
+
+Branch naming follows `git.branchPattern` from config — by default
+`{type}/{ticket}/{slug}` where `{type}` is one of `git.branchTypes`
+(default `feature`, `bugfix`, `hotfix`) and `{ticket}` is the full
+`<ticketKey>` (e.g., `<projectKey>-12345`).
+
+Example with default config: `feature/<projectKey>-12345/short-description`
+
+Delegate to the git sub-agent. Read the agent instructions from
+`.claude/skills/feature-workflow/agents/git-agent.md`, then spawn
+the agent:
+
+```
+Tool: Agent
+Parameters:
+  prompt: |
+    <paste the full contents of git-agent.md as instructions>
+
+    INPUT CONTEXT:
+    {
+      "action": "create-branch",
+      "branchName": "feature/<projectKey>-XXXXX/short-description"
+    }
+  allowedTools:
+    - Bash
+```
+
+The agent will emit a JSON result block:
+
+```json
+{
+  "action": "create-branch",
+  "branch": "feature/<projectKey>-XXXXX/short-description"
+}
+```
+
+---
+
+## Phase 3: Develop and test
+
+<!-- IF WORKSPACE_MODE -->
+**Workspace mode:** Develop each affected repo in `implementationOrder`. For
+each `repo` in order:
+
+1. Run `load-repo-context.sh <repo>` to load per-repo conventions.
+2. Spawn implementation-agent with `repo: <repo>` and the repo's plan slice
+   at `.claude/changes/<ticketKey>/slices/<repo>.md` as `executionPlanPath`.
+3. All file operations in the agent run under `<workspaceRoot>/<repo>/`.
+4. Build/test commands run via `(cd <workspaceRoot>/<repo> && <cmd>)`.
+
+Repos with no inter-dependency (e.g., `datahandler` and `controller` when
+only `common-dto` must go first) MAY be spawned in parallel with
+`run_in_background: true` once their predecessors in `implementationOrder`
+are complete.
+<!-- ENDIF -->
+
+All implementation work is delegated to the implementation-agent. Read the
+agent instructions from
+`.claude/skills/feature-workflow/agents/implementation-agent.md` once and
+reuse for all spawns in this phase.
+
+### 3a. Baseline and checkpoint 1 — in parallel
+
+Launch both the baseline verification and checkpoint 1 simultaneously.
+Send them in a **single message with two Agent tool calls**, both with
+`run_in_background: true`:
+
+```
+Tool: Agent  (run_in_background: true)
+Parameters:
+  prompt: |
+    <paste the full contents of implementation-agent.md as instructions>
+
+    INPUT CONTEXT:
+    {
+      "action": "baseline",
+      "service": "<{{REPO_OR_SERVICE_LABEL}} name and path>",
+      "area": "<BE | FE>"
+    }
+  allowedTools:
+    - Read
+    - Edit
+    - Write
+    - Bash
+```
+
+```
+Tool: Agent  (run_in_background: true)
+Parameters:
+  prompt: |
+    <paste the full contents of implementation-agent.md as instructions>
+
+    INPUT CONTEXT:
+    {
+      "action": "checkpoint",
+      "executionPlanPath": "specs/<NNN>-<TICKET>-<slug>/execution-plan.md",
+      "checkpointNumber": 1,
+      "specDir": "specs/<NNN>-<TICKET>-<slug>/",
+      "service": "<{{REPO_OR_SERVICE_LABEL}} name and path>",
+      "area": "<BE | FE>"
+    }
+  allowedTools:
+    - Read
+    - Edit
+    - Write
+    - Bash
+```
+
+Wait for both to complete.
+
+**If baseline fails (`passed: false`):** Stop the entire workflow
+immediately. Tell the user the baseline is broken (compilation or boot
+failure), include the `failureDetails` from the result, and ask them to
+fix the issues before re-invoking the workflow. Any checkpoint 1 work
+done in parallel is discarded — the branch can be deleted and recreated.
+Do NOT proceed with further checkpoints.
+
+**If baseline passes:** Continue with checkpoint 1's result. If checkpoint 1
+also completed successfully, proceed to checkpoint 2. If checkpoint 1 hit a
+blocker, present it to the user.
+
+### 3b. Remaining checkpoints
+
+For each remaining checkpoint (2 to N) in the execution plan, spawn the
+implementation-agent sequentially:
+
+```
+Tool: Agent
+Parameters:
+  prompt: |
+    <paste the full contents of implementation-agent.md as instructions>
+
+    INPUT CONTEXT:
+    {
+      "action": "checkpoint",
+      "executionPlanPath": "specs/<NNN>-<TICKET>-<slug>/execution-plan.md",
+      "checkpointNumber": <N>,
+      "specDir": "specs/<NNN>-<TICKET>-<slug>/",
+      "service": "<{{REPO_OR_SERVICE_LABEL}} name and path>",
+      "area": "<BE | FE>"
+    }
+  allowedTools:
+    - Read
+    - Edit
+    - Write
+    - Bash
+```
+
+**If `completed` is `false`:** the agent hit a blocker. Present the
+`blocker` description to the user and wait for guidance before retrying
+or proceeding.
+
+**After each checkpoint:** aggregate `testsRun`, `testsPassed`, and
+`liveTestResults` from the result into a cumulative test summary. This
+summary is passed to the PR agent in Phase 6.
+
+Only proceed to Phase 4 when **all checkpoints are complete** and every
+scenario in the BDD spec is satisfied.
+
+<!-- IF JIRA_AVAILABLE -->
+**Note:** Test failures, lint failures, and build failures encountered during
+implementation are **recoverable** — they stay inside the checkpoint iterate
+loop and are fixed by the implementation-agent. They do NOT trigger the
+top-level error handler and do NOT touch the Jira ticket status.
+<!-- ENDIF -->
+
+---
+
+## Phase 4: Commit
+
+<!-- IF WORKSPACE_MODE -->
+**Workspace mode:** Commit each affected repo independently. For each `repo`
+in `affectedRepos`, spawn git-agent with `repo: <repo>` and run the full
+squash → stage → commit flow inside `<workspaceRoot>/<repo>/`. Each repo
+gets its own commit with the same `ticketKey` prefix.
+
+Repos can be committed in parallel (spawn all git-agents with
+`run_in_background: true`).
+<!-- ENDIF -->
+
+One commit per branch. If multiple commits accumulated during Phase 3, squash
+them first. The commit message must be prefixed with `ticketKey` from Phase 1.
+
+All git operations in this phase are delegated to the git sub-agent. Read the
+agent instructions from `.claude/skills/feature-workflow/agents/git-agent.md`
+once and reuse for all spawns in this phase.
+
+**Important:** The spec directory (`specs/<NNN>-{{TICKET_PREFIX}}-XXXXX-slug/`) is code and
+must be included in the commit. Pass it as `specDir` to `stage-and-prepare`.
+
+### 4a. Check commit count
+
+Spawn the git-agent:
+
+```
+Tool: Agent
+Parameters:
+  prompt: |
+    <paste the full contents of git-agent.md as instructions>
+
+    INPUT CONTEXT:
+    {
+      "action": "count-commits"
+    }
+  allowedTools:
+    - Bash
+```
+
+Extract `commitCount`:
+- If **1 commit**: skip to Step 4c
+- If **> 1 commits**: run the squash flow (Steps 4b then 4c)
+- If **0 commits**: something went wrong in Phase 3 — check staging
+
+### 4b. Squash (only if > 1 commit)
+
+Spawn the git-agent with the `squash` action. The agent runs
+`prepare-squash.sh`, creates a backup branch, and does a soft-reset to the
+detected main branch. If the rebase encounters conflicts, the agent
+reports an error — stop and tell the user to resolve manually.
+
+```
+Tool: Agent
+Parameters:
+  prompt: |
+    <paste the full contents of git-agent.md as instructions>
+
+    INPUT CONTEXT:
+    {
+      "action": "squash"
+    }
+  allowedTools:
+    - Bash
+```
+
+Extract `combinedDiff` and `backupBranch` from the result.
+
+Use the `combinedDiff` to compose the commit message (Step 4c format), then
+spawn the git-agent with the `commit` action (see 4c below).
+
+After committing, verify the squash integrity by spawning the git-agent with
+the `verify-squash` action:
+
+```
+Tool: Agent
+Parameters:
+  prompt: |
+    <paste the full contents of git-agent.md as instructions>
+
+    INPUT CONTEXT:
+    {
+      "action": "verify-squash",
+      "backupBranch": "<backupBranch from squash result>"
+    }
+  allowedTools:
+    - Bash
+```
+
+If `verified` is `false`, stop and tell the user. Include the recovery
+command from the error result.
+
+### 4c. Stage and commit
+
+**Stage** — spawn the git-agent:
+
+```
+Tool: Agent
+Parameters:
+  prompt: |
+    <paste the full contents of git-agent.md as instructions>
+
+    INPUT CONTEXT:
+    {
+      "action": "stage-and-prepare",
+      "specDir": "specs/<NNN>-{{TICKET_PREFIX}}-XXXXX-slug/"
+    }
+  allowedTools:
+    - Bash
+```
+
+**Compose the commit message:**
+
+```
+<TICKET>: <message>
+
+<description_block>
+```
+
+**Message line**: imperative mood, ≤50 chars after the ticket prefix.
+**Description block**: explain why and what; wrap at 72 chars; group changes
+under headings when the diff spans multiple areas.
+
+**Commit** — spawn the git-agent:
+
+```
+Tool: Agent
+Parameters:
+  prompt: |
+    <paste the full contents of git-agent.md as instructions>
+
+    INPUT CONTEXT:
+    {
+      "action": "commit",
+      "message": "<full commit message>"
+    }
+  allowedTools:
+    - Bash
+```
+
+After committing, collect the final commit message (first line + body) — you
+will pass this to the PR agent in Phase 6.
+
+---
+
+## Phase 5: Review
+
+<!-- IF WORKSPACE_MODE -->
+**Workspace mode:** Run both review gates for each affected repo. For each
+`repo` in `affectedRepos`, spawn spec-reviewer and design-reviewer with
+`repo: <repo>`. Each reviewer loads the per-repo context via
+`load-repo-context.sh <repo>` before reviewing.
+
+Repos with no cross-repo review dependency may be reviewed in parallel.
+<!-- ENDIF -->
+
+Two automated review gates verify the implementation before creating the PR.
+Both reviewers are read-only — they report findings, and the
+implementation-agent applies fixes.
+
+### 5a. Spec review
+
+First, get the list of changed files:
+
+```
+Tool: Agent
+Parameters:
+  prompt: |
+    <paste the full contents of git-agent.md as instructions>
+
+    INPUT CONTEXT:
+    {
+      "action": "get-changed-files"
+    }
+  allowedTools:
+    - Bash
+```
+
+Then spawn the spec-reviewer. Read agent instructions from
+`.claude/skills/feature-workflow/agents/spec-reviewer.md`:
+
+```
+Tool: Agent
+Parameters:
+  prompt: |
+    <paste the full contents of spec-reviewer.md as instructions>
+
+    INPUT CONTEXT:
+    {
+      "specDir": "specs/<NNN>-<TICKET>-<slug>/",
+      "service": "<{{REPO_OR_SERVICE_LABEL}} name and path>",
+      "changedFiles": <changedFiles array from git-agent>,
+      "area": "<BE | FE>"
+    }
+  allowedTools:
+    - Read
+    - Bash
+```
+
+**If `passed` is `false`** (Critical findings):
+
+1. Spawn the implementation-agent with `fix-findings`:
+
+```
+Tool: Agent
+Parameters:
+  prompt: |
+    <paste the full contents of implementation-agent.md as instructions>
+
+    INPUT CONTEXT:
+    {
+      "action": "fix-findings",
+      "findings": <Critical + Major findings from spec-reviewer>,
+      "reviewerType": "spec",
+      "service": "<{{REPO_OR_SERVICE_LABEL}} name and path>",
+      "area": "<BE | FE>"
+    }
+  allowedTools:
+    - Read
+    - Edit
+    - Write
+    - Bash
+```
+
+2. Amend the commit:
+
+```
+Tool: Agent
+Parameters:
+  prompt: |
+    <paste the full contents of git-agent.md as instructions>
+
+    INPUT CONTEXT:
+    {
+      "action": "amend"
+    }
+  allowedTools:
+    - Bash
+```
+
+3. Re-run the spec-reviewer to verify fixes resolved the Critical findings.
+
+If still failing after one fix cycle, present the remaining findings to the
+user and ask for guidance.
+
+### 5b. Design review
+
+Spawn the design-reviewer. Read agent instructions from
+`.claude/skills/feature-workflow/agents/design-reviewer.md`:
+
+```
+Tool: Agent
+Parameters:
+  prompt: |
+    <paste the full contents of design-reviewer.md as instructions>
+
+    INPUT CONTEXT:
+    {
+      "service": "<{{REPO_OR_SERVICE_LABEL}} name and path>",
+      "changedFiles": <changedFiles array from git-agent>,
+      "area": "<BE | FE>"
+    }
+  allowedTools:
+    - Read
+    - Bash
+```
+
+**If `passed` is `false`** (Critical findings): follow the same
+fix → amend → re-review loop as 5a, using `"reviewerType": "design"`.
+
+---
+
+<!-- IF ADO_AVAILABLE -->
+## Phase 6: PR creation
+
+<!-- IF WORKSPACE_MODE -->
+**Workspace mode:** Validate, push, and create PRs for all affected repos in
+parallel. For each `repo` in `affectedRepos`:
+
+1. Spawn git-agent (validate → push) with `repo: <repo>`.
+2. On success, spawn pr-agent with `repo: <repo>` and the repo's
+   `repositoryId` from `config.repos[repo].azureDevOps.repositoryId`.
+
+Run all repo chains (validate + push + PR) as concurrent groups — send all
+git-agent spawns in one message with `run_in_background: true`, wait for all,
+then send all pr-agent spawns in one message with `run_in_background: true`.
+
+**No merge polling.** PRs are opened and left for human review. After all PRs
+are created, print the merge-order recommendation (from `prMergeOrder` and
+`prMergeRationale` captured in Phase 1a-ws):
+
+```
+## PRs created — merge in this order:
+
+1. <repo>  <prUrl>
+   Reason: <prMergeRationale excerpt>
+2. <repo>  <prUrl>
+   ...
+
+⚠ Do not merge until upstream artifacts are published (see rationale above).
+Merge order is a recommendation — you decide when to merge.
+```
+
+Skip the single-repo sections 6a/6b below — they are superseded by the
+per-repo loops above.
+<!-- ENDIF -->
+
+### 6a. Validate and push
+
+Spawn the git-agent to validate PR readiness:
+
+```
+Tool: Agent
+Parameters:
+  prompt: |
+    <paste the full contents of git-agent.md as instructions>
+
+    INPUT CONTEXT:
+    {
+      "action": "validate-pr-readiness"
+    }
+  allowedTools:
+    - Bash
+```
+
+Then sync and push:
+
+```
+Tool: Agent
+Parameters:
+  prompt: |
+    <paste the full contents of git-agent.md as instructions>
+
+    INPUT CONTEXT:
+    {
+      "action": "sync-and-push",
+      "branch": "<branch name>",
+      "remoteStatus": "<remoteStatus from validate result>"
+    }
+  allowedTools:
+    - Bash
+```
+
+### 6b. Create the PR
+
+Delegate to the PR sub-agent. Read the agent instructions from
+`.claude/skills/feature-workflow/agents/pr-agent.md`:
+
+```
+Tool: Agent
+Parameters:
+  prompt: |
+    <paste the full contents of pr-agent.md as instructions>
+
+    INPUT CONTEXT:
+    {
+      "ticketKey": "<projectKey>-XXXXX",
+      "ticketUrl": "<urlBase>/browse/<projectKey>-XXXXX",
+      "branch": "feature/<projectKey>-XXXXX/short-description",
+      "commitMessage": "<first line of commit message>",
+      "commitBody": "<commit message body>",
+      "testSummary": "<X unit tests passed; live tested POST /api/v1/foo (200), GET /api/v1/bar (200)>",
+      "diffStat": "<summary of changed files>"
+    }
+  allowedTools:
+    - Bash
+    - mcp__azure-devops__repo_create_pull_request
+```
+
+The agent will emit a JSON result block. Extract `prUrl` and tell the user.
+
+---
+<!-- ENDIF -->
+
+<!-- IF JIRA_AVAILABLE -->
+## Phase 7: Finalize JIRA
+
+After the PR is created, finalize the JIRA ticket with work logging, cost
+analysis, and status transition. All operations are delegated to the
+jira-agent.
+
+Read the agent instructions from
+`.claude/skills/feature-workflow/agents/jira-agent.md` once and reuse for
+all spawns in this phase.
+
+### 7a. Log implementation work
+
+Calculate elapsed time since the checkpoint recorded after Phase 1d:
+
+```bash
+IMPL_END=$(date +%s)
+IMPL_SECONDS=$((IMPL_END - CHECKPOINT))
+```
+
+Convert to JIRA time format (round to nearest 5 minutes). Then log it:
+
+<!-- IF WORKSPACE_MODE -->
+**Workspace mode:** The worklog comment should include a per-repo breakdown.
+Build the comment body from `affectedRepos` and `implementationOrder`:
+
+```
+Implementation work
+
+Repos touched (in implementation order):
+  1. common-dto   — [brief scope from plan slice]
+  2. datahandler  — [brief scope from plan slice]
+  3. controller   — [brief scope from plan slice]
+
+Recommended merge order: common-dto → datahandler → controller
+Rationale: <prMergeRationale>
+```
+
+Pass this as the `comment` field in the worklog action below.
+<!-- ENDIF -->
+
+```
+Tool: Agent
+Parameters:
+  prompt: |
+    <paste the full contents of jira-agent.md as instructions>
+
+    INPUT CONTEXT:
+    {
+      "action": "addWorklog",
+      "ticketKey": "<ticketKey>",
+      "timeSpent": "<implementation elapsed time in JIRA format>",
+      "comment": "Implementation work"
+    }
+  allowedTools:
+    - mcp__atlassian__addWorklogToJiraIssue
+```
+
+### 7b. Cost analysis comment
+
+Build a per-phase/per-agent cost analysis and post it as a JIRA comment.
+
+**Step 1:** Read the pricing reference:
+
+```
+Read: .claude/skills/feature-workflow/references/claude-pricing.md
+```
+
+**Step 2:** Collect workflow metadata:
+- Which agents were spawned during this run
+- How many checkpoints were completed
+- How many spawns per agent type
+- Whether context compaction occurred
+
+**Step 3:** Ask the user for the actual session cost:
+
+> "Please type `/cost` and share the total so I can include the actual
+> figure in the JIRA comment."
+
+Hold the actual cost value.
+
+**Step 4:** Estimate per-agent costs using the agent profiles from the
+pricing reference. For each agent spawn, calculate:
+
+```
+cost = (input_tokens × cache_write_rate + output_tokens × output_rate) / 1,000,000
+```
+
+Use the mid-range of each agent's profile. For the orchestrator, use the
+blended input rate (30% cache-write + 70% cache-hit).
+
+**Step 5:** Compose the JIRA comment using this template:
+
+```markdown
+## AI-Assisted Development — Cost Analysis
+
+**Actual session cost:** $XX.XX (from `/cost`)
+
+### Per-Phase / Per-Agent Breakdown (estimated)
+
+| Phase | Agent | Model | Est. Input | Est. Output | Est. Cost |
+|-------|-------|-------|-----------|-------------|-----------|
+| 1-pre Ticket | jira-agent | Haiku 4.5 | 8K | 2K | $0.02 |
+| 1a-d Clarify | Orchestrator | Sonnet 4.6 | 80K | 20K | $0.60 |
+| 1b Spec | sdd-expert | Sonnet 4.6 | 30K | 15K | $0.34 |
+| 1c Plan | architect | Sonnet 4.6 | 40K | 20K | $0.45 |
+| 1d Worklog | jira-agent | Haiku 4.5 | 8K | 2K | $0.02 |
+| 2 Branch | git-agent | Haiku 4.5 | 8K | 2K | $0.02 |
+| 3 Baseline | impl-agent | Sonnet 4.6 | 30K | 10K | $0.26 |
+| 3 CP 1 | impl-agent | Sonnet 4.6 | 150K | 50K | $1.31 |
+| ... | ... | ... | ... | ... | ... |
+| 4 Commit | git-agent (xN) | Haiku 4.5 | NK | NK | $X.XX |
+| 5a Spec review | spec-reviewer | Sonnet 4.6 | 50K | 8K | $0.31 |
+| 5b Design review | design-reviewer | Sonnet 4.6 | 50K | 8K | $0.31 |
+| 6 PR | pr-agent + git | Sonnet+Haiku | 25K | 5K | $0.17 |
+| 7 Finalize | jira-agent (x3) | Haiku 4.5 | 24K | 6K | $0.06 |
+| Orchestrator (impl) | — | Sonnet 4.6 | 200K | 60K | $1.65 |
+| **Total estimate** | | | | | **$X.XX** |
+
+### Pricing Rates Used
+
+| Model | Input (cache-write) | Cache Hit | Output |
+|-------|-------------------|-----------|--------|
+| Sonnet 4.6 | $3.75/MTok | $0.30/MTok | $15/MTok |
+| Haiku 4.5 | $1.25/MTok | $0.10/MTok | $5/MTok |
+
+> Per-agent estimates use cache-write rate for input (fresh context per spawn).
+> Orchestrator uses blended rate (30% cache-write, 70% cache-hit).
+> Delta between estimate and actual reflects context compaction, retries,
+> and estimation error.
+```
+
+Fill in actual values from the run: number of checkpoints, agent spawns,
+and the actual total from `/cost`. Use mid-range values from the agent
+profiles in the pricing reference for the token estimates.
+
+**Step 6:** Post the comment:
+
+```
+Tool: Agent
+Parameters:
+  prompt: |
+    <paste the full contents of jira-agent.md as instructions>
+
+    INPUT CONTEXT:
+    {
+      "action": "addComment",
+      "ticketKey": "<ticketKey>",
+      "commentBody": "<composed cost analysis comment>"
+    }
+  allowedTools:
+    - mcp__atlassian__addCommentToJiraIssue
+```
+
+### 7c. Transition to success state
+
+```
+Tool: Agent
+Parameters:
+  prompt: |
+    <paste the full contents of jira-agent.md as instructions>
+
+    INPUT CONTEXT:
+    {
+      "action": "transition",
+      "ticketKey": "<ticketKey>",
+      "lifecycleState": "success"
+    }
+  allowedTools:
+    - mcp__atlassian__getTransitionsForJiraIssue
+    - mcp__atlassian__transitionJiraIssue
+```
+
+### Final report to user
+
+After Phase 7 completes, tell the user:
+- The PR URL
+- The JIRA ticket URL (now in the success state)
+- A brief summary of what was implemented
+- Test results (from the test summary built in Phase 3)
+- The actual session cost
+- A reminder to request reviewers if needed
+<!-- ENDIF -->
+
+---
+
+## Quick reference
+
+| Phase | Who | Action | Gate |
+|-------|-----|--------|------|
+<!-- IF JIRA_AVAILABLE -->
+| 1-pre Ticket | **jira-agent** (Haiku) | Create or prepare ticket with AI labels | — |
+<!-- ENDIF -->
+| 1a Clarify | Main (Sonnet) | Ask targeted questions until fully understood | — |
+| 1b Specify | **sdd-expert** (Sonnet) | Write BDD specs to `specs/<NNN>-{{TICKET_PREFIX}}-XXXXX-slug/` | Resolve openQuestions |
+| 1c Plan | **architect** (Sonnet) | Write `execution-plan.md` with checkpoints and contracts | Acknowledge risks |
+| 1d Review | Main (Sonnet) | Present spec + plan to user | **User confirms** ← only gate |
+| 2 Branch | **git-agent** (Haiku) | `git checkout -b feature/<projectKey>-X/slug` | — |
+| 3a Baseline + CP1 | **impl-agent** (Sonnet) ×2 | Compile+boot check ‖ first checkpoint (parallel) | Stop if baseline fails |
+| 3b Checkpoints | **impl-agent** (Sonnet) | Remaining checkpoints sequentially | — |
+| 4 Commit | **git-agent** (Haiku) | Squash → stage → commit | — |
+| 5a Spec review | **spec-reviewer** (Sonnet) | Verify all BDD scenarios implemented + tested | Fix Critical findings |
+| 5b Design review | **design-reviewer** (Sonnet) | Verify code quality against project rules | Fix Critical findings |
+<!-- IF ADO_AVAILABLE -->
+| 6 PR | **git-agent** (Haiku) + **pr-agent** (Sonnet) | Validate → sync → push → create PR | — |
+<!-- ENDIF -->
+<!-- IF JIRA_AVAILABLE -->
+| 7a Worklog | **jira-agent** (Haiku) | Log implementation time | — |
+| 7b Cost | **jira-agent** (Haiku) | Post per-agent cost analysis comment | — |
+| 7c Transition | **jira-agent** (Haiku) | Move ticket to success state | — |
+<!-- ENDIF -->
+
+## What this is NOT
+
+- Not for experiments or spikes — those just get coded, no ticket needed
+- Not for quick fixes with no PR — commit directly without this workflow
+- The ticket documents the **goal**, not the solution — implementation details
+  belong in the commit message and PR description, written after the work
+
+---
+
+## Upgrade Path
+
+Generated by claudboard-workflow on {{GENERATION_DATE}} from template version v1.
+To regenerate with updated templates, remove this directory and re-run `/claudboard-workflow`.
