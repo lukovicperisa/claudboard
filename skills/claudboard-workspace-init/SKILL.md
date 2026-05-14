@@ -4,8 +4,9 @@ model: claude-sonnet-4-6
 description: >
   Bootstrap a workspace meta-repo that holds the shared `.claude/` directory for
   a multi-repo workspace (a parent directory containing N independent git repos).
-  Creates a sibling git repository, migrates any existing workspace `.claude/`
-  contents into it, and symlinks the workspace root's `.claude/` to the meta-repo.
+  Creates a child git repository inside the workspace root, migrates any existing
+  workspace `.claude/` contents into it, and symlinks the workspace root's
+  `.claude/` to the meta-repo's `.claude/`.
   Run once per workspace — teammates use `/claudboard-workspace-link` afterwards.
   Use when: /claudboard-workspace-init, "bootstrap workspace", "set up workspace
   meta-repo", "create workspace .claude repo", "initialise workspace .claude",
@@ -68,7 +69,23 @@ Check whether the workspace is already bootstrapped:
 test -L .claude && readlink .claude
 ```
 
-If `.claude` is a symlink AND its target is an existing directory, stop with:
+If `.claude` is a symlink, resolve the target:
+
+```bash
+LINK_TARGET="$(readlink .claude)"
+RESOLVED="$(cd "$(dirname .claude/${LINK_TARGET})" && pwd)/$(basename "${LINK_TARGET}")"
+```
+
+**Case 1 — Stale sibling-layout bootstrap:** If the resolved target path is **not** a child of CWD (i.e., its parent directory is NOT the workspace root), stop with:
+
+> Stale sibling-layout meta-repo detected at [resolved-path].
+> This version (v3+) uses a child layout (meta-repo nested inside the workspace root).
+> Remove the symlink and the old meta-repo manually:
+>   rm .claude
+>   rm -rf [resolved-parent]/
+> Then re-run /claudboard-workspace-init.
+
+**Case 2 — Already bootstrapped (child layout):** If the resolved target is a child of CWD AND the target directory exists, stop with:
 
 > Workspace already bootstrapped — meta-repo at [resolved target parent].
 > Remote: [git remote get-url origin from that path, or "none configured"].
@@ -97,11 +114,10 @@ Meta-repo name [meas.workspace]:
 ```
 
 **Collision guards:**
-- If a directory with that name already exists as a sibling of CWD → refuse:
-  > Target path '[parent]/[name]' already exists. Choose another name.
-- If the chosen name matches the basename of any existing service subdirectory
-  of the workspace → refuse:
-  > Name '[name]' collides with workspace subdir '[cwd]/[name]'. Choose another name.
+- If a directory with that name already exists inside CWD (`[cwd]/[name]` exists) → refuse:
+  > Target path '[cwd]/[name]' already exists. Choose another name.
+
+  This covers both service repo name collisions and any other existing subdirectory.
 
 ### 2b. Remote URL (optional)
 
@@ -130,8 +146,8 @@ If `.claude/` exists and has contents, list what will be migrated:
 ## claudboard-workspace-init — Ready to Bootstrap
 
 Meta-repo name:   meas.workspace
-Meta-repo path:   [parent]/../meas.workspace/
-Workspace .claude: [cwd]/.claude → ../meas.workspace/.claude
+Meta-repo path:   [cwd]/meas.workspace/
+Workspace .claude: [cwd]/.claude → ./meas.workspace/.claude
 Remote:           [url or "none — add later"]
 
 Files to migrate from existing .claude/:
@@ -182,11 +198,11 @@ Report: "Backup created at [cwd]/.claude.backup.[timestamp]/"
 
 ## Phase 4: Create Meta-Repo
 
-Create the meta-repo as a sibling of the workspace root.
+Create the meta-repo as a child directory inside the workspace root.
 
 ```bash
 META_REPO_NAME="[chosen name]"
-META_REPO_PATH="../${META_REPO_NAME}"
+META_REPO_PATH="./${META_REPO_NAME}"
 ```
 
 ### 4a. Git init
@@ -243,14 +259,14 @@ This repo holds:
 
 ## First-time setup (teammates)
 
-Clone this repo as a **sibling** of your service repos, then run the bootstrap:
+Clone this repo as a **child** of the workspace root, then run the bootstrap:
 
 ```bash
-# From the workspace root (parent of your service repos):
+# From the workspace root:
 /claudboard-workspace-link [remote-url]
 # or manually:
-git clone [remote-url] ../[meta-repo-name]
-cd ../[meta-repo-name] && ./setup.sh
+git clone [remote-url] [workspace-root]/[meta-repo-name]
+cd [workspace-root]/[meta-repo-name] && ./setup.sh
 ```
 
 ## What NOT to commit
@@ -262,10 +278,10 @@ cd ../[meta-repo-name] && ./setup.sh
 
 ```bash
 # Pull latest from team:
-git -C ../[meta-repo-name] pull
+git -C [workspace-root]/[meta-repo-name] pull
 
 # After claudboard refresh generates new reports/rules:
-cd ../[meta-repo-name]
+cd [workspace-root]/[meta-repo-name]
 git add .claude/rules/ .claude/reports/
 git commit -m "chore: refresh claudboard artifacts"
 git push
@@ -433,12 +449,12 @@ Print a full summary after all steps complete.
 ## claudboard-workspace-init — Done
 
 ### Meta-repo
-  Path:    [parent]/[meta-repo-name]/
+  Path:    [cwd]/[meta-repo-name]/
   Remote:  [url or "none — add later with: git -C [path] remote add origin <url>"]
   Commit:  [git log --oneline -1 output]
 
 ### Workspace symlink
-  [cwd]/.claude → [relative path to meta-repo .claude]
+  [cwd]/.claude → ./[meta-repo-name]/.claude
 
 ### Migrated files
   ✓ rules/
@@ -455,8 +471,8 @@ Print a full summary after all steps complete.
 ### Next steps
   1. Run `/claudboard-generate` or `/claudboard-workflow` — output will be
      written into the meta-repo through the symlink.
-  2. Review the generated files in [meta-repo-name]/ and commit them:
-       cd [meta-repo-path]
+  2. Review the generated files in [cwd]/[meta-repo-name]/ and commit them:
+       cd [cwd]/[meta-repo-name]
        git add .claude/
        git commit -m "chore: claudboard-generated artifacts"
        git push

@@ -42,7 +42,7 @@ A workspace root is defined as: a directory with no build file at CWD, where at 
 ### Requirement: Plan-and-confirm gate for `init`
 The `/claudboard-workspace-init` command SHALL print a complete plan of actions and pause for explicit user confirmation before performing any destructive or external action (git init, file moves, symlink creation, push to remote).
 
-The plan SHALL include: the meta-repo name, the meta-repo target path (sibling of CWD), the optional remote URL, the contents being migrated from existing `<workspace>/.claude/` (if any), and the path of the backup that will be created.
+The plan SHALL include: the meta-repo name, the meta-repo target path (child of CWD — i.e., a directory created inside the workspace root), the optional remote URL, the contents being migrated from existing `<workspace>/.claude/` (if any), and the path of the backup that will be created.
 
 #### Scenario: User confirms plan
 - **WHEN** the user accepts the printed plan with `y` or equivalent
@@ -57,23 +57,27 @@ The plan SHALL include: the meta-repo name, the meta-repo target path (sibling o
 - **THEN** the system SHALL apply the change, re-print the updated plan, and re-prompt for confirmation
 
 ### Requirement: Meta-repo name and location
-The meta-repo SHALL be created as a sibling directory of the workspace root. The default name SHALL be `<workspace-basename>.workspace` (e.g., `meas.workspace` for a workspace at `/Users/x/meas/`). The user SHALL be able to override the default in the confirmation gate.
+The meta-repo SHALL be created as a child directory inside the workspace root. The default name SHALL be `<workspace-basename>.workspace` (e.g., `meas.workspace` for a workspace at `/Users/x/meas/`, producing `/Users/x/meas/meas.workspace/`). The user SHALL be able to override the default in the confirmation gate.
 
 #### Scenario: Default name accepted
 - **WHEN** the user accepts the default name at the confirmation gate
-- **THEN** the system SHALL create `<parent-of-workspace>/<workspace-basename>.workspace/`
+- **THEN** the system SHALL create `<workspace>/<workspace-basename>.workspace/`
 
 #### Scenario: Custom name provided
 - **WHEN** the user provides an alternative name (e.g., `meas.cloud.workspace`)
-- **THEN** the system SHALL create `<parent-of-workspace>/<custom-name>/`
+- **THEN** the system SHALL create `<workspace>/<custom-name>/`
 
 #### Scenario: Name collides with existing workspace subdir
-- **WHEN** the chosen meta-repo name matches the basename of any existing service subdirectory of the workspace
+- **WHEN** the chosen meta-repo name matches the basename of any existing subdirectory of the workspace (whether a service repo or any other directory)
 - **THEN** the system SHALL refuse with "Name '<name>' collides with workspace subdir '<workspace>/<name>'. Choose another name." and re-prompt
 
 #### Scenario: Target path already exists
-- **WHEN** the chosen meta-repo path already exists on disk
-- **THEN** the system SHALL refuse with "Target path '<path>' already exists. Remove it or choose another name." and re-prompt
+- **WHEN** the chosen meta-repo path `<workspace>/<name>/` already exists on disk
+- **THEN** the system SHALL refuse with "Target path '<workspace>/<name>' already exists. Remove it or choose another name." and re-prompt
+
+#### Scenario: Stale sibling-layout bootstrap detected
+- **WHEN** `<workspace>/.claude` is a symlink AND its target resolves to a path outside the workspace root (i.e., a pre-v3 sibling-layout bootstrap)
+- **THEN** the system SHALL refuse with "Stale sibling-layout meta-repo detected at <resolved-path>. This version uses a child layout (meta-repo nested inside the workspace root). Remove the symlink and the old meta-repo manually, then re-run." and stop. The system SHALL NOT auto-migrate.
 
 ### Requirement: Backup of existing workspace `.claude/` before migration
 If `<workspace>/.claude/` already exists with any contents, the system SHALL copy it to `<workspace>/.claude.backup.<UTC-timestamp>/` before migrating contents into the meta-repo.
@@ -134,11 +138,11 @@ The system SHALL move existing workspace-level claudboard artifacts (rules, repo
 ### Requirement: Symlink from workspace to meta-repo `.claude/`
 After the meta-repo is initialised and contents migrated, the system SHALL create a symlink from `<workspace>/.claude` to `<meta-repo>/.claude` using `ln -sfn` semantics (replace existing symlink, fail if a non-symlink directory exists at the target).
 
-The symlink target SHALL be expressed as a relative path (e.g., `../meas.workspace/.claude`) so the workspace remains portable across cloned locations.
+The symlink target SHALL be expressed as a relative path (e.g., `meas.workspace/.claude` or `./meas.workspace/.claude`) so the workspace remains portable across cloned locations. Because the meta-repo lives inside the workspace root, the symlink target is a single-segment relative path — no `..` traversal.
 
 #### Scenario: Symlink created successfully
 - **WHEN** `<workspace>/.claude` does not exist (after migration)
-- **THEN** the system SHALL create `<workspace>/.claude` as a symlink targeting `../<meta-repo-basename>/.claude`
+- **THEN** the system SHALL create `<workspace>/.claude` as a symlink targeting `<meta-repo-basename>/.claude` (relative path, no `..` prefix)
 
 #### Scenario: Symlink would replace a directory
 - **WHEN** `<workspace>/.claude` exists as a non-symlink directory after migration (this should not happen if backup ran correctly)
@@ -162,12 +166,12 @@ The generated `<meta-repo>/README.md` SHALL document: the workspace this meta-re
 
 #### Scenario: README explains teammate bootstrap
 - **WHEN** a teammate clones the meta-repo and reads the README
-- **THEN** the README SHALL contain a "First-time setup" section with the canonical command sequence: clone the meta-repo as a sibling of the workspace, then run `./setup.sh` or `/claudboard-workspace-link <remote-url>`
+- **THEN** the README SHALL contain a "First-time setup" section with the canonical command sequence: clone the meta-repo as a child of the workspace root (`git clone <url> <workspace>/<meta-repo-basename>`), then run `./setup.sh` from inside the cloned directory or `/claudboard-workspace-link <remote-url>` from the workspace root
 
 ### Requirement: setup.sh contract
 The generated `<meta-repo>/setup.sh` SHALL be idempotent and SHALL produce a working symlink (or copy-mode equivalent) every time it runs. It SHALL detect existing correct setup and exit successfully without changes.
 
-The script SHALL accept no arguments. It SHALL infer the workspace root as `$(dirname "$(realpath "$(dirname "$0")")")` and the meta-repo path as `$(dirname "$0")`. The script SHALL refuse to run if the inferred workspace root is itself a git repository.
+The script SHALL accept no arguments. Because the meta-repo lives inside the workspace root, the script SHALL infer the meta-repo path as `$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)` and the workspace root as `$(dirname "<meta-repo-path>")`. The script SHALL refuse to run if the inferred workspace root is itself a git repository.
 
 #### Scenario: First-time run on POSIX
 - **WHEN** a teammate runs `<meta-repo>/setup.sh` on macOS/Linux
@@ -182,13 +186,17 @@ The script SHALL accept no arguments. It SHALL infer the workspace root as `$(di
 - **THEN** the script SHALL replace the symlink with `ln -sfn` semantics and report the change
 
 ### Requirement: `/claudboard-workspace-link` flow
-The teammate-side command SHALL clone the provided remote URL as a sibling of the workspace root and then run the cloned `setup.sh`.
+The teammate-side command SHALL clone the provided remote URL as a child directory inside the workspace root and then run the cloned `setup.sh`.
 
-The chosen local directory name SHALL default to the basename inferred from the remote URL (e.g., `meas.workspace.git` → `meas.workspace`). The user SHALL be able to override the local name.
+The chosen local directory name SHALL default to the basename inferred from the remote URL (e.g., `meas.workspace.git` → `meas.workspace`). The user SHALL be able to override the local name. The local name SHALL NOT collide with any existing subdirectory of the workspace.
 
 #### Scenario: First teammate bootstrap
 - **WHEN** a teammate runs `/claudboard-workspace-link git@host:org/meas.workspace.git` from a workspace root with no existing meta-repo
-- **THEN** the system SHALL clone the repo as `<parent>/<inferred-name>/`, run `<inferred-name>/setup.sh`, and report the resulting symlink path
+- **THEN** the system SHALL clone the repo as `<workspace>/<inferred-name>/`, run `<workspace>/<inferred-name>/setup.sh`, and report the resulting symlink path
+
+#### Scenario: Stale sibling-layout symlink at workspace root
+- **WHEN** the teammate's workspace already has a `.claude` symlink whose target resolves to a path outside the workspace root (pre-v3 sibling layout)
+- **THEN** the system SHALL refuse with "Stale sibling-layout meta-repo detected at <resolved-path>. Remove the symlink and the old meta-repo manually, then re-run." and stop
 
 #### Scenario: Meta-repo already cloned
 - **WHEN** the inferred local path already exists AND its `git remote get-url origin` matches the requested URL

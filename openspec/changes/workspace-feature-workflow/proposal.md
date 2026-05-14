@@ -6,7 +6,7 @@ This change makes the workspace itself a first-class feature-workflow target: on
 
 ## What Changes
 
-- **NEW: workspace meta-repo bootstrap** — two new claudboard commands, `/claudboard-workspace-init` and `/claudboard-workspace-link`, that create (or link to) a sibling git repo holding the workspace `.claude/` and symlink it into the workspace root. Bootstrap runs before `/generate` or `/claudboard-workflow` in workspace mode.
+- **NEW: workspace meta-repo bootstrap** — two new claudboard commands, `/claudboard-workspace-init` and `/claudboard-workspace-link`, that create (or link to) a child git repo nested inside the workspace root holding the workspace `.claude/` and symlink it into the workspace root. Bootstrap runs before `/generate` or `/claudboard-workflow` in workspace mode.
 - **NEW: multi-repo feature-workflow** — the generated `feature-workflow/` skill in workspace mode is multi-repo-native: Phase 1 infers `affected_repos` from the spec and surfaces detection to the user; Phases 2-5 loop over affected repos; Phase 6 opens all PRs in parallel with a recommended merge order; Phase 7 aggregates worklogs to a single Jira ticket. Solo-repo features fall out as N=1.
 - **NEW: per-repo context-loading contract** — every code-touching agent (architect, implementation, design-reviewer, spec-reviewer) MUST read each affected repo's `.claude/CLAUDE.md`, `rules/`, `memory/MEMORY.md`, and skill `SKILL.md` files (excluding feature-workflow itself, which no longer exists per-repo) before working in that repo. Backed by a `scripts/load-repo-context.sh` helper for token economy.
 - **MODIFIED: `feature-workflow-generation`** — generation branches on `workspace: true`. In workspace mode, the skill is generated into the workspace meta-repo's `.claude/skills/feature-workflow/` (multi-repo variant) and per-repo feature-workflow generation is suppressed. In single-repo mode, behavior is unchanged.
@@ -18,7 +18,7 @@ This change makes the workspace itself a first-class feature-workflow target: on
 ## Capabilities
 
 ### New Capabilities
-- `workspace-meta-repo-bootstrap`: Bootstrap a sibling git repo to hold the workspace `.claude/` and symlink it into the workspace root. Covers `/claudboard-workspace-init` (creator flow with confirmation gate, migration, optional remote, idempotency) and `/claudboard-workspace-link <remote-url>` (teammate flow). Includes safety guards (refuse if workspace root is itself a git repo, refuse on name collision, backup existing contents) and Windows symlink fallback.
+- `workspace-meta-repo-bootstrap`: Bootstrap a child git repo nested inside the workspace root to hold the workspace `.claude/` and symlink it into the workspace root. Covers `/claudboard-workspace-init` (creator flow with confirmation gate, migration, optional remote, idempotency) and `/claudboard-workspace-link <remote-url>` (teammate flow). Includes safety guards (refuse if workspace root is itself a git repo, refuse on name collision with existing service subdir, refuse stale sibling-layout bootstraps from prior versions, backup existing contents) and Windows symlink fallback.
 - `multirepo-feature-workflow`: The multi-repo-aware feature-workflow execution model. Covers `affected_repos` inference + user-confirmation gate, per-repo phase loop (branch/develop/commit/review), parallel PR creation with merge-order recommendation, single-ticket worklog aggregation, and the per-repo context-loading contract (read repo's `.claude/` before any work).
 
 ### Modified Capabilities

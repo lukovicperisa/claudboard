@@ -118,6 +118,86 @@ Wait for user to confirm or correct misclassifications before proceeding.
 - **Monorepo:** Phase 1b runs once (global scope), then Phases 1c-1h run once per service.
 - **Workspace:** Phase 1b runs once per repo (no global scope), then new Phase 1c (graph construction) and Phase 1d (ecosystem injection) run once after all repos analyzed.
 
+### Workspace parallelisation protocol (workspace mode only)
+
+**Run immediately after presenting the topology (Step 3), before any per-repo work begins.**
+
+**Step 1: Pre-create report directory**
+
+```bash
+mkdir -p "<workspace>/.claude/reports"
+```
+
+Create this directory before spawning any sub-agents. This is idempotent and must complete before fan-out.
+
+**Step 2: Dispatch parallel sub-agents — one per service repo**
+
+Spawn ALL service-repo sub-agents in a **single tool-call message** (one Agent invocation per repo, all in the same batch). Do NOT dispatch sequentially.
+
+Library repos are NOT delegated — the orchestrator handles them directly with a lighter scan (identity, dependency list, publish target) and produces their per-repo report inline.
+
+Sub-agent prompt template (fill in `<repo-path>`, `<report-path>`, `<workspace-root>` for each repo):
+
+```
+You are a code analysis agent. Analyse the service repo at:
+  <repo-path>
+
+Scope: run claudboard-analyse Phases 1b–1h scoped entirely to <repo-path>.
+Load stack-detectors.md, run Wide Scan, Strategic Sampling, call-path tracing,
+duplication detection, and existing .claude/ inventory exactly as specified in
+the analyse SKILL.md. Do NOT analyse any other repo or the workspace root.
+
+After completing analysis, write the FULL analysis report (including all Phase 2
+content: What/How/Why/Quality Assessment/Proposed Artifacts/Workflow Signals)
+to this exact absolute path BEFORE returning:
+  <report-path>
+
+The report MUST include this YAML frontmatter:
+---
+generated_at: <ISO 8601 timestamp>
+repo: <repo-path>
+workspace_member: true
+workspace_root: <workspace-root>
+version: "2.1.0"
+---
+
+After writing the file, return ONLY the following compact YAML summary block
+(do not return the full report — the orchestrator has access to the file):
+
+service_identity: <resolved service name>
+inbound:
+  rest_endpoints: <count>
+  kafka_topics_consumed: [<topic>, ...]
+  solace_topics_consumed: [<topic>, ...]
+outbound:
+  feign_clients: [<name>, ...]
+  kafka_topics_produced: [<topic>, ...]
+  solace_topics_produced: [<topic>, ...]
+quality_avg: <X.X>
+watch_top3:
+  - <finding 1>
+  - <finding 2>
+  - <finding 3>
+```
+
+The orchestrator uses these YAML summaries for Phase 1c graph construction without re-reading all per-repo reports.
+
+**Step 3: Write-verification and serial recovery**
+
+After all sub-agents return, verify that every expected report file exists:
+
+```bash
+# Check for each expected repo report
+ls "<workspace>/.claude/reports/claudboard-analysis-<repo-name>.md"
+```
+
+For any missing report file (sub-agent failed or returned without writing):
+- Re-run that single repo's analysis serially (do not re-run the full batch)
+- Use the same phases and report format
+- Write the missing file before proceeding
+
+Do NOT proceed to Phase 1c until all expected per-repo report files are confirmed on disk.
+
 ### 1b. Global scan (runs once for both single-project and monorepo)
 
 **For single-project repos:** Standard parallel file detection for the whole repo.
@@ -468,6 +548,8 @@ If user selects "edit" or indicates corrections, adjust the graph and re-present
 ### NEW PHASE 1d: Ecosystem Context Injection (workspace mode only)
 
 **Run this phase ONLY in workspace mode**, after user confirms the graph in Phase 1c.
+
+> **Authorship:** ecosystem.md files are written by the **orchestrator** during this phase, NOT by per-repo sub-agents — sub-agents have no graph context.
 
 For each **service repo** (not library repos, not workspace root):
 
@@ -841,6 +923,24 @@ version: "2.1.0"
 
 Each per-service report contains the full per-service analysis (stack, conventions, quality scores, Watch/Preserve, proposed scoped artifacts).
 
+**Workspace:** Save two levels:
+- `<workspace>/.claude/reports/claudboard-analysis-workspace.md` — global workspace summary (topology table, cross-service dependency graph, per-repo summary table with quality scores, global Watch findings, proposed global artifacts). Frontmatter includes `workspace: true` and `repos: [<service-dir-name>, ...]` and `libraries: [<library-dir-name>, ...]`.
+- `<workspace>/.claude/reports/claudboard-analysis-<repo-name>.md` — these were written by per-repo sub-agents during the parallelisation phase (Phase 1a protocol). The orchestrator verifies their presence here (see write-verification step) but does NOT re-write them. Use the service's directory basename as `<repo-name>`.
+
+Each per-repo sub-agent report frontmatter must include `workspace_member: true` and `workspace_root: <absolute workspace path>`.
+
+After all workspace reports are verified on disk, print a path manifest:
+
+```
+Reports written:
+  <workspace>/.claude/reports/claudboard-analysis-workspace.md
+  <workspace>/.claude/reports/claudboard-analysis-<repo1>.md
+  <workspace>/.claude/reports/claudboard-analysis-<repo2>.md
+  ...
+
+Run /claudboard-workspace-init (if not done) then /claudboard-workflow to generate the multi-repo feature-workflow skill.
+```
+
 After saving, ask the user:
 
 > Analysis saved. Would you like to generate artifacts now, or run `/generate` in a fresh session? (Fresh session recommended — analysis fills context with discovery data not needed during generation.)
@@ -861,7 +961,7 @@ After saving, ask the user:
 
 ## Constraints
 
-- **Read-only for source code.** The only file written is `.claude/reports/claudboard-analysis.md`.
+- **Read-only for source code.** Files written depend on mode: single-project writes `.claude/reports/claudboard-analysis.md`; monorepo additionally writes `.claude/reports/claudboard-analysis-<service>.md` per service; workspace writes `<workspace>/.claude/reports/claudboard-analysis-workspace.md` plus `<workspace>/.claude/reports/claudboard-analysis-<repo>.md` per service repo (by sub-agents) and `<repo>/.claude/memories/ecosystem.md` per service repo (by orchestrator).
 - **Never modify source code, tests, or existing files.**
 - **Max ~50 source files read** for large repos — note sampling in report.
 - **Secrets found during scan:** Report file:line only, never print the value.

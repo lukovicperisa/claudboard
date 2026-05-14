@@ -3,9 +3,9 @@ name: claudboard-workspace-link
 model: claude-sonnet-4-6
 description: >
   Link a teammate's machine to an existing workspace meta-repo. Clones the
-  meta-repo as a sibling of the workspace root and runs setup.sh to create
-  the symlink. One-command teammate bootstrap after the first developer has
-  run /claudboard-workspace-init.
+  meta-repo as a child directory inside the workspace root and runs setup.sh
+  to create the symlink. One-command teammate bootstrap after the first
+  developer has run /claudboard-workspace-init.
   Use when: /claudboard-workspace-link, "join workspace", "link to workspace
   meta-repo", "bootstrap workspace on this machine", "set up workspace .claude
   from remote", "clone workspace meta-repo", "connect to shared .claude".
@@ -59,10 +59,27 @@ If no qualifying subdirectory found, stop with:
 test -L .claude && readlink .claude
 ```
 
-If `.claude` is already a symlink to an existing directory:
+If `.claude` is a symlink, resolve the target and check layout:
 
 ```bash
-EXISTING_REMOTE=$(git -C "$(dirname "$(readlink .claude)")" remote get-url origin 2>/dev/null || echo "none")
+LINK_TARGET="$(readlink .claude)"
+RESOLVED="$(cd "$(dirname .claude/${LINK_TARGET})" && pwd)/$(basename "${LINK_TARGET}")"
+CWD_ABS="$(pwd)"
+```
+
+**Case 1 — Stale sibling-layout bootstrap:** If the resolved target's parent directory is NOT the workspace root (i.e., it resolves outside CWD), stop with:
+
+> Stale sibling-layout meta-repo detected at [resolved-path].
+> This version (v3+) uses a child layout (meta-repo nested inside the workspace root).
+> Remove the symlink and the old meta-repo manually:
+>   rm .claude
+>   rm -rf [resolved-parent]/
+> Then re-run /claudboard-workspace-link [url].
+
+**Case 2 — Already linked (child layout):** If the resolved target is a child of CWD and the target directory exists:
+
+```bash
+EXISTING_REMOTE=$(git -C "$(dirname "${RESOLVED}")" remote get-url origin 2>/dev/null || echo "none")
 ```
 
 If the existing symlink target's remote matches the requested URL → skip clone,
@@ -110,7 +127,7 @@ Local directory name [meas.workspace]:
 **Collision detection:**
 
 ```bash
-TARGET_PATH="../[name]"
+TARGET_PATH="./[name]"
 ```
 
 If `${TARGET_PATH}` already exists:
@@ -123,7 +140,7 @@ If `${TARGET_PATH}` already exists:
    proceed directly to Phase 4 (run setup.sh).
 
 2. If the path exists but remote does not match (or is not a git repo):
-   > Local path '[parent]/[name]' exists but is not the expected meta-repo.
+   > Local path '[cwd]/[name]' exists but is not the expected meta-repo.
    > Choose another name or resolve the conflict manually.
    Re-prompt for the name.
 
@@ -166,15 +183,15 @@ If `setup.sh` exits with a non-zero status, stop with:
 ## claudboard-workspace-link — Done
 
 ### Meta-repo
-  Cloned to: [parent]/[name]/
+  Cloned to: [cwd]/[name]/
   Remote:    [url]
 
 ### Workspace symlink
-  [cwd]/.claude → [resolved link target]
+  [cwd]/.claude → ./[name]/.claude
 
 ### Next steps
   Pull the latest artifacts before starting work:
-    git -C [parent]/[name]/ pull
+    git -C [cwd]/[name]/ pull
 
   Start a feature from the workspace root:
     /start-feature [description]

@@ -30,14 +30,17 @@ The design touches three concerns that interact: (1) where the shared `.claude/`
 
 ## Decisions
 
-### Decision 1 — Workspace `.claude/` lives in a sibling meta-repo, symlinked into the workspace root
+### Decision 1 — Workspace `.claude/` lives in a child meta-repo nested inside the workspace root, symlinked from `<workspace>/.claude`
 
 Three locations were considered:
 - **Workspace root directly** (no git): per-developer drift, no version control, no PR workflow for shared rules. Rejected.
 - **Inside one of the service repos** (e.g., common-dto/workspace-claude/): leverages an existing clone but couples a DTO library to workspace orchestration concerns. Future maintainers will hate it. Rejected.
-- **Sibling git meta-repo** (e.g., `meas.cloud.workspace`): standard git workflow, no nested `.git/` weirdness, slightly more onboarding ceremony. Chosen.
+- **Sibling git meta-repo** (e.g., `../meas.cloud.workspace/`): standard git workflow but introduces ambiguity in `setup.sh` path resolution (parent of meta-repo is the parent-of-workspace, not the workspace itself — the script can't unambiguously identify which sibling is the workspace root). Considered but rejected.
+- **Child git meta-repo** (e.g., `meas/meas.workspace/`): nested inside the workspace root, single-segment relative symlink (`./meas.workspace/.claude`), `setup.sh` infers workspace root unambiguously as the meta-repo's parent directory. Chosen.
 
 Symlink chosen over rsync/copy because it makes "the meta-repo IS the source of truth" mechanically true: `git status` in the meta-repo reflects everything the team should see. Copy mode exists as a fallback only when symlinks are unavailable (Windows without dev mode, restricted filesystems).
+
+The child layout has one small downside: a teammate `find . -name .git` from the workspace root will see the meta-repo's `.git/` alongside the service repos'. This is acceptable — the meta-repo is a legitimate workspace artifact and naming it `<workspace>.workspace` keeps it grouped at the bottom of any sorted listing. No service repo is named `*.workspace`, so collision is structurally avoided.
 
 ### Decision 2 — Bootstrap is automated by claudboard, not documented
 
@@ -103,7 +106,7 @@ The user can decide when to commit fully to the workspace-root model.
 
 [**Risk** — symlinks on Windows] → Detect symlink-creation failure at runtime, fall back to copy-mode bootstrap with a `.copy-mode` marker file and explicit re-sync command in the README. Document the fallback in `setup.sh` so re-runs work. The trade-off is that copy-mode loses the "git status reflects truth" property — devs must re-run `setup.sh` after `git pull` to see updates locally.
 
-[**Risk** — meta-repo path drift across teammates] → `setup.sh` infers paths relative to its own location, so any teammate who clones the meta-repo as a sibling of the workspace root gets a working symlink without manual configuration. The risk degenerates to "teammate clones in the wrong place," handled by `link` validating the workspace-root prerequisite.
+[**Risk** — meta-repo path drift across teammates] → `setup.sh` infers paths relative to its own location (workspace root = parent of meta-repo). Any teammate who clones the meta-repo as a child of the workspace root gets a working symlink without manual configuration. The risk degenerates to "teammate clones in the wrong place," handled by `link` validating the workspace-root prerequisite.
 
 [**Risk** — agents forget to load per-repo context] → The contract is documented in every code-touching agent's prompt template, and `load-repo-context.sh` makes compliance a one-line Bash call rather than a multi-step Read fan-out. Lapses will manifest as the agent suggesting changes that violate per-repo conventions; design-reviewer (which also loads context per the contract) catches these in Phase 5.
 
@@ -125,7 +128,7 @@ The user can decide when to commit fully to the workspace-root model.
 
 **For the user's MEAS workspace specifically:**
 1. Land this change in claudboard.
-2. User runs `/claudboard-workspace-init` from `/Users/LUP1BG/Documents/BoschProjects/meas/` — bootstraps `meas.workspace` as a sibling.
+2. User runs `/claudboard-workspace-init` from `/Users/LUP1BG/Documents/BoschProjects/meas/` — bootstraps `meas.workspace` as a child directory inside `meas/`.
 3. User runs `/claudboard-workflow` from the workspace root — generates the multi-repo skill into the meta-repo.
 4. User exercises the workflow on a small synthetic cross-service feature (e.g., add a no-op field to common-dto + reflect in datahandler) to validate the loop end-to-end.
 5. User decides per service repo whether to remove the existing hand-edited `feature-workflow/` skill or leave it for solo-repo sessions.

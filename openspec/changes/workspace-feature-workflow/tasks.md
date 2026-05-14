@@ -1,19 +1,19 @@
 ## 1. Workspace meta-repo bootstrap — `claudboard-workspace-init`
 
 - [x] 1.1 Create skill scaffold at `skills/claudboard-workspace-init/SKILL.md` with name, model, and trigger-phrase frontmatter
-- [x] 1.2 Implement workspace-root prerequisite check (no `.git/` at CWD; ≥1 sibling subdir with build file + `.git/`)
+- [ ] 1.2 Implement workspace-root prerequisite check (no `.git/` at CWD; ≥1 service subdir with build file + `.git/`) — re-verify under child layout
 - [x] 1.3 Implement plan-and-confirm gate that prints meta-repo name, target path, optional remote, contents to migrate, backup path
-- [x] 1.4 Implement meta-repo name resolution with `<workspace-basename>.workspace` default and collision/conflict guards
+- [ ] 1.4 Implement meta-repo name resolution with `<workspace-basename>.workspace` default and collision guards (must not collide with any existing CWD subdir under child layout)
 - [x] 1.5 Implement backup of existing `<workspace>/.claude/` to `<workspace>/.claude.backup.<timestamp>/` (preserve symlinks, permissions)
-- [x] 1.6 Implement meta-repo `git init` + scaffold (`.claude/{rules,reports,skills,changes}/`, `.gitignore`, `README.md`, `setup.sh`)
+- [ ] 1.6 Implement meta-repo `git init` + scaffold at `<workspace>/<name>/` (`.claude/{rules,reports,skills,changes}/`, `.gitignore`, `README.md`, `setup.sh`)
 - [x] 1.7 Implement migration of standard files (`rules/`, `reports/`, `config.json`) from backup into meta-repo; leave `settings.local.json` and unrecognised files behind with report entry
-- [x] 1.8 Implement symlink creation `<workspace>/.claude → ../<meta-repo>/.claude` using relative-path `ln -sfn`
+- [ ] 1.8 Implement symlink creation `<workspace>/.claude → <meta-repo>/.claude` using relative-path `ln -sfn` (no `..` traversal — meta-repo is nested inside the workspace root)
 - [x] 1.9 Implement Windows / no-symlink fallback (copy-mode bootstrap with `.copy-mode` marker and re-sync instructions)
 - [x] 1.10 Implement initial commit + optional remote push with graceful failure handling (no rollback on push failure)
-- [x] 1.11 Implement idempotency: detect existing healthy symlink and exit with "already bootstrapped" message
+- [ ] 1.11 Implement idempotency: detect existing healthy symlink and exit with "already bootstrapped" message; ALSO detect stale sibling-layout symlinks (target outside workspace root) and refuse with manual-removal instructions
 - [x] 1.12 Implement completion report (meta-repo path, symlink path, remote URL, migrated files, backup path, next-step guidance)
-- [x] 1.13 Author `setup.sh` template — idempotent, infers paths, supports re-runs, refuses if workspace root has its own `.git/`
-- [x] 1.14 Author `README.md` template — workspace identification, teammate bootstrap one-liner, do-not-commit notes
+- [ ] 1.13 Author `setup.sh` template — idempotent, infers paths (workspace root is `dirname` of meta-repo path because meta-repo is nested inside workspace), supports re-runs, refuses if workspace root has its own `.git/`
+- [ ] 1.14 Author `README.md` template — workspace identification, teammate bootstrap one-liner (clone as child of workspace root), do-not-commit notes
 - [x] 1.15 Author `.gitignore` template — `settings.local.json`, `.DS_Store`, `*.swp`, claudboard ephemeral state
 
 ## 2. Workspace meta-repo bootstrap — `claudboard-workspace-link`
@@ -21,7 +21,7 @@
 - [x] 2.1 Create skill scaffold at `skills/claudboard-workspace-link/SKILL.md` with trigger phrases and `<remote-url>` argument handling
 - [x] 2.2 Implement workspace-root prerequisite check (same as `init`)
 - [x] 2.3 Implement local directory name inference from remote URL with override prompt
-- [x] 2.4 Implement clone + `setup.sh` invocation with collision detection (existing path / different remote)
+- [ ] 2.4 Implement clone (target path `<workspace>/<inferred-name>/`) + `setup.sh` invocation with collision detection (existing path / different remote / stale sibling-layout symlink)
 - [x] 2.5 Implement idempotency: detect already-cloned matching remote and re-run `setup.sh`
 - [x] 2.6 Implement completion message with resulting symlink path
 
@@ -74,7 +74,7 @@
 ## 9. CLAUDE.md updates
 
 - [x] 9.1 Document the workspace-mode bootstrap commands in `CLAUDE.md` skill anatomy section
-- [x] 9.2 Document the workspace meta-repo concept and the symlink convention
+- [x] 9.2 Document the workspace meta-repo concept and the symlink convention (child-of-workspace layout, single-segment relative symlink)
 - [x] 9.3 Note the v1-no-upgrade-path constraint applies to the multi-repo skill same as the single-repo one
 - [x] 9.4 Note that pre-existing per-repo `feature-workflow/` skills in service repos coexist with the workspace skill until manually removed
 
@@ -88,6 +88,19 @@
 - [ ] 10.6 Verify `load-repo-context.sh` is invoked at least once per affected repo in implementation-agent traces
 - [ ] 10.7 Verify pre-existing per-repo `feature-workflow/` skills in MEAS service repos are NOT modified or deleted by `init` or `workflow` runs; verify completion report lists them with the removal command
 - [ ] 10.8 Verify idempotency: re-run `/claudboard-workspace-init` exits cleanly with "already bootstrapped"; re-run `/claudboard-workflow` refuses with the existing-skill message
+
+## 12. Child-layout amendment — re-author affected SKILL/template files
+
+- [x] 12.1 Update `skills/claudboard-workspace-init/SKILL.md` description and Phase 4 path math to use `./[name]` (child) instead of `../[name]` (sibling)
+- [x] 12.2 Update `skills/claudboard-workspace-init/SKILL.md` Phase 1b idempotency to detect and refuse stale sibling-layout symlinks
+- [x] 12.3 Update `skills/claudboard-workspace-init/SKILL.md` Phase 2a collision check to compare against existing CWD subdirs (not parent siblings)
+- [x] 12.4 Update `skills/claudboard-workspace-init/SKILL.md` Phase 4d README template clone instruction to clone as child
+- [x] 12.5 Update `skills/claudboard-workspace-init/SKILL.md` Phase 8 completion-report path display
+- [x] 12.6 Update `skills/claudboard-workspace-link/SKILL.md` description and Phase 2 TARGET_PATH to use `./[name]` (child)
+- [x] 12.7 Update `skills/claudboard-workspace-link/SKILL.md` Phase 1b idempotency to detect and refuse stale sibling-layout symlinks
+- [x] 12.8 Update `setup.sh` template — verify `WORKSPACE_ROOT="$(dirname "$SCRIPT_DIR")"` is correct under child layout (it now resolves to the workspace root directly; under prior sibling layout it was buggy)
+- [x] 12.9 Update `CLAUDE.md` "Workspace meta-repo concept" section diagram and prose
+- [x] 12.10 Bump plugin version in `.claude-plugin/plugin.json`
 
 ## 11. Out-of-scope confirmations (no work, just sanity checks)
 
