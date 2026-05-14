@@ -4,15 +4,5 @@
   "author": {
     "name": "LUP1BG"
   },
-  "version": "3.1.0",
-  "skills": [
-    "claudboard",
-    "claudboard-analyse",
-    "claudboard-generate",
-    "claudboard-refresh",
-    "claudboard-techdebt",
-    "claudboard-workflow",
-    "claudboard-workspace-init",
-    "claudboard-workspace-link"
-  ]
+  "version": "3.2.0"
 }
