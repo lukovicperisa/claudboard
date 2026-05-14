@@ -536,6 +536,22 @@ Skip:
 
 ---
 
+### NEW: Workflow Signals detection (run once per project/service)
+
+After Wide Scan, compute workflow signals for use by `claudboard-workflow`. These are lightweight computations that piggyback on Phase 1 data.
+
+Load `../claudboard/references/workflow-signals.md` for detection heuristics.
+
+Detect and record:
+1. **Cross-service edges** — from Feign/HTTP/Kafka/gRPC usage detected in Wide Scan
+2. **Shared libraries** — from dependency analysis (workspace/monorepo mode only)
+3. **Auth perimeter** — from security scan results in Wide Scan
+4. **Ticket prefix** — from `git log --oneline -50` and `git branch -a` (run these commands)
+
+These signals feed the "### Workflow Signals" subsection in the analysis report (Phase 2).
+
+---
+
 ## Phase 2: Analysis Report
 
 Present findings to the user. Use **WHAT / HOW / WHY / CONCERNS** structure.
@@ -641,6 +657,23 @@ After listing all Watch findings, **apply compound severity rules** from `../cla
 
 [If no .claude/:]
 - No existing Claude context found
+
+### Workflow Signals
+
+```yaml
+workflow_signals:
+  cross_service_edges:
+    - {type: feign, target: "<service-name>"}
+    - {type: http, target: "<url-or-unknown>"}
+    - {type: kafka, target: "<topic-name>"}
+    - {type: grpc, target: "<service-name-or-unknown>"}
+  shared_libraries:
+    - {name: "<artifactId-or-package>", consumer_count: <N>}
+  auth_perimeter: "gateway|in-service-jwt|none|unknown"
+  ticket_prefix: "PROJ|null"
+```
+
+[Emit this block even if all signals are empty/unknown — the subsection must always be present]
 
 ### Proposed Artifacts
 
@@ -751,6 +784,23 @@ For monorepos, produce **two levels** of report content:
 ### Preserve / Watch
 [Same format as single-project, scoped to this service]
 
+### Workflow Signals
+
+```yaml
+workflow_signals:
+  cross_service_edges:
+    - {type: feign, target: "<service-name>"}
+    - {type: http, target: "<url-or-unknown>"}
+    - {type: kafka, target: "<topic-name>"}
+    - {type: grpc, target: "<service-name-or-unknown>"}
+  shared_libraries:
+    - {name: "<artifactId-or-package>", consumer_count: <N>}
+  auth_perimeter: "gateway|in-service-jwt|none|unknown"
+  ticket_prefix: "PROJ|null"
+```
+
+[Emit this block even if all signals are empty/unknown — the subsection must always be present]
+
 ### Proposed Artifacts (scoped to this service)
 **Rules:**
 - `<service-name>-conventions.md` (paths: `<service-dir>/**`) — <conventions>
@@ -825,3 +875,4 @@ After saving, ask the user:
 | `../claudboard/references/stack-detectors-{lang}.md` | Phase 1c Wide Scan — load language-specific file (java, typescript, python, go, rust, or dotnet) |
 | `../claudboard/references/pattern-catalog.md` | Phase 2 — pattern/anti-pattern identification |
 | `../claudboard/references/quality-signals.md` | Phase 2 — quality scoring, rule depth, skill triggers |
+| `../claudboard/references/workflow-signals.md` | Phase 1 (after Wide Scan) — workflow signal detection heuristics |

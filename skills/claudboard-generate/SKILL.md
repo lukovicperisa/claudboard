@@ -163,6 +163,10 @@ Next steps:
 - Try the suggested validation tasks below to verify artifacts work
 ```
 
+**Conditional next step (include only when analysis report indicates Jira+ADO MCPs are configured):**
+
+> Ready to generate a tailored `feature-workflow` skill? Run `/claudboard-workflow` to create a full ticket→branch→BDD→plan→implement→PR workflow for this project.
+
 ### 3e. Validation suggestions
 
 After presenting the completion report, propose 3-5 representative tasks the user can try in a fresh Claude Code session to verify the generated artifacts actually help. Select tasks based on what was detected:
