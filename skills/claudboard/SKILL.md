@@ -12,6 +12,12 @@ description: >
   "help me onboard to this codebase", or asks for a project health check, architecture audit,
   or code quality review. Also triggers on "what patterns does this repo use", "generate coding
   rules from this codebase", or when starting work on an unfamiliar or brownfield project.
+  Also routes: "set up feature workflow", "install start-feature skill", "generate feature-workflow",
+  "configure feature workflow for this repo" → claudboard-workflow.
+  Also routes: "bootstrap workspace", "set up workspace meta-repo", "create workspace .claude repo",
+  "share my .claude across the team", "make .claude versioned" → claudboard-workspace-init.
+  Also routes: "join workspace", "link to workspace meta-repo", "bootstrap workspace on this machine",
+  "clone workspace meta-repo", "connect to shared .claude" → claudboard-workspace-link.
 ---
 
 # Claudboard — Project Onboarding Agent
@@ -46,6 +52,9 @@ Reads the saved analysis report and generates production-ready `.claude/` artifa
 
 - **`/refresh`** — Delta updates for projects that already have `.claude/` artifacts. Identifies what's new, stale, or missing and updates only what changed.
 - **`/techdebt`** — Deep tech debt analysis. Produces module-grouped, ticket-ready reports with severity, effort, and fix suggestions.
+- **`/claudboard-workflow`** — Generates a tailored `.claude/skills/feature-workflow/` skill into the target project from the analysis report. Requires `/generate` to have run first. Also triggered by: "set up feature workflow", "install start-feature skill", "generate feature-workflow", "configure feature workflow for this repo".
+- **`/claudboard-workspace-init`** — Bootstrap a workspace meta-repo: creates a sibling git repo, migrates existing `.claude/` contents, and symlinks the workspace root's `.claude/` to the meta-repo. Run once per workspace from the workspace root. Also triggered by: "bootstrap workspace", "set up workspace meta-repo", "share my .claude across the team".
+- **`/claudboard-workspace-link <url>`** — Teammate bootstrap: clones the workspace meta-repo and creates the symlink. Run after the first developer has run `/claudboard-workspace-init`. Also triggered by: "join workspace", "link to workspace meta-repo", "clone workspace meta-repo".
 
 ## Reference Files
 
