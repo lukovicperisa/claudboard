@@ -618,19 +618,35 @@ Skip:
 
 ---
 
-### NEW: Workflow Signals detection (run once per project/service)
+### NEW: Workflow Signals & Architectural Pattern detection (run once per project/service)
 
-After Wide Scan, compute workflow signals for use by `claudboard-workflow`. These are lightweight computations that piggyback on Phase 1 data.
+After Wide Scan, compute workflow signals and detect architectural patterns. These are lightweight computations that piggyback on Phase 1 data.
 
-Load `../claudboard/references/workflow-signals.md` for detection heuristics.
+Load `../claudboard/references/workflow-signals.md` for the schema, sub-catalog pointers, and detection heuristics.
 
-Detect and record:
-1. **Cross-service edges** — from Feign/HTTP/Kafka/gRPC usage detected in Wide Scan
+**Workflow Signals — detect and record:**
+1. **Cross-service edges** — from Wide Scan transport hits; load `edges/sync-rpc.md`, `edges/messaging.md`, `edges/streaming.md`, `edges/graphql.md` for per-transport extraction rules (workspace mode only; in single-repo mode emit `cross_service_edges: []`)
 2. **Shared libraries** — from dependency analysis (workspace/monorepo mode only)
 3. **Auth perimeter** — from security scan results in Wide Scan
 4. **Ticket prefix** — from `git log --oneline -50` and `git branch -a` (run these commands)
 
-These signals feed the "### Workflow Signals" subsection in the analysis report (Phase 2).
+**Architectural Pattern detection — always run (single-repo and workspace modes):**
+
+Load `../claudboard/references/patterns/architectural.md` for detection rules and minimum-signal thresholds.
+
+Run pattern detection in parallel:
+- Saga (orchestration + choreography)
+- CQRS
+- Outbox
+- BFF (workspace mode only — requires sibling service context from graph)
+- API Composition
+- Circuit Breaker
+- Schema Registry
+- AsyncAPI
+
+Apply "empty evidence → no entry" rule: if a pattern's minimum-signal threshold is not met, omit it from the `architectural_patterns` list entirely.
+
+These signals feed the "### Workflow Signals" and "### Architectural Patterns" subsections in the analysis report (Phase 2).
 
 ---
 
@@ -745,10 +761,10 @@ After listing all Watch findings, **apply compound severity rules** from `../cla
 ```yaml
 workflow_signals:
   cross_service_edges:
-    - {type: feign, target: "<service-name>"}
-    - {type: http, target: "<url-or-unknown>"}
-    - {type: kafka, target: "<topic-name>"}
-    - {type: grpc, target: "<service-name-or-unknown>"}
+    - {family: sync-rpc, protocol: feign, type: feign, direction: outbound, target: "<service-name>", schema_ref: null}
+    - {family: sync-rpc, protocol: http,  type: http,  direction: outbound, target: "<url-or-unknown>", schema_ref: null}
+    - {family: messaging, protocol: kafka, type: kafka, direction: outbound, target: "<topic-name>", schema_ref: null}
+    - {family: sync-rpc, protocol: grpc,  type: grpc,  direction: inbound,  target: "<service-name-or-unknown>", schema_ref: "path/to/file.proto"}
   shared_libraries:
     - {name: "<artifactId-or-package>", consumer_count: <N>}
   auth_perimeter: "gateway|in-service-jwt|none|unknown"
@@ -756,6 +772,17 @@ workflow_signals:
 ```
 
 [Emit this block even if all signals are empty/unknown — the subsection must always be present]
+
+### Architectural Patterns
+
+```yaml
+architectural_patterns:
+  - {type: saga, style: orchestration, evidence: ["path/to/orchestrator.java:42"]}
+  - {type: circuit-breaker, library: resilience4j, evidence: ["path/with/@CircuitBreaker:88"]}
+  - {type: schema-registry, vendor: confluent, evidence: ["application.yml:schema.registry.url"]}
+```
+
+[Emit `architectural_patterns: []` when no patterns are detected. Omit any entry whose minimum-signal threshold is not met (empty evidence → no entry). BFF detection is workspace-only.]
 
 ### Proposed Artifacts
 
@@ -871,10 +898,10 @@ For monorepos, produce **two levels** of report content:
 ```yaml
 workflow_signals:
   cross_service_edges:
-    - {type: feign, target: "<service-name>"}
-    - {type: http, target: "<url-or-unknown>"}
-    - {type: kafka, target: "<topic-name>"}
-    - {type: grpc, target: "<service-name-or-unknown>"}
+    - {family: sync-rpc, protocol: feign, type: feign, direction: outbound, target: "<service-name>", schema_ref: null}
+    - {family: sync-rpc, protocol: http,  type: http,  direction: outbound, target: "<url-or-unknown>", schema_ref: null}
+    - {family: messaging, protocol: kafka, type: kafka, direction: outbound, target: "<topic-name>", schema_ref: null}
+    - {family: sync-rpc, protocol: grpc,  type: grpc,  direction: inbound,  target: "<service-name-or-unknown>", schema_ref: "path/to/file.proto"}
   shared_libraries:
     - {name: "<artifactId-or-package>", consumer_count: <N>}
   auth_perimeter: "gateway|in-service-jwt|none|unknown"
@@ -882,6 +909,17 @@ workflow_signals:
 ```
 
 [Emit this block even if all signals are empty/unknown — the subsection must always be present]
+
+### Architectural Patterns
+
+```yaml
+architectural_patterns:
+  - {type: saga, style: orchestration, evidence: ["path/to/orchestrator.java:42"]}
+  - {type: circuit-breaker, library: resilience4j, evidence: ["path/with/@CircuitBreaker:88"]}
+  - {type: schema-registry, vendor: confluent, evidence: ["application.yml:schema.registry.url"]}
+```
+
+[Emit `architectural_patterns: []` when no patterns are detected. Omit any entry whose minimum-signal threshold is not met (empty evidence → no entry). BFF detection is workspace-only.]
 
 ### Proposed Artifacts (scoped to this service)
 **Rules:**
@@ -903,7 +941,7 @@ If patterns are ambiguous or inconsistent, ask the user now — e.g.:
 
 ## Phase 3: Save Report & Next Steps
 
-After presenting the analysis, save reports to `.claude/reports/`. Create the directory if it doesn't exist.
+**Execute these steps in order. Do not skip or reorder. Do not ask the user anything until step 3 is complete.**
 
 All saved files must include YAML frontmatter:
 
@@ -915,38 +953,48 @@ version: "2.1.0"
 ---
 ```
 
-**Single-project:** Save the full report to `.claude/reports/claudboard-analysis.md`.
+### Step 1: Create the reports directory
 
-**Monorepo:** Save two levels:
+Create the reports directory before writing any file. This is idempotent — safe to run even if the directory exists.
+
+- **Single-project / monorepo:** `mkdir -p <project-root>/.claude/reports`
+- **Workspace:** `mkdir -p <workspace>/.claude/reports`
+
+### Step 2: Write report file(s) using the Write tool
+
+**Use the Write tool to create each file. Displaying the analysis content to the user does NOT substitute for writing the file to disk.**
+
+**Single-project:** Write the full report to `.claude/reports/claudboard-analysis.md`.
+
+**Monorepo:** Write two levels:
 - `.claude/reports/claudboard-analysis.md` — global report (topology, CI/CD, cross-service patterns, per-service summary table, proposed global artifacts). Frontmatter additionally includes `monorepo: true` and `services: [<dir-name>, ...]`.
 - `.claude/reports/claudboard-analysis-<dir-name>.md` — one per detected service (e.g., `claudboard-analysis-order-service.md`). Use the service's directory name as-is — no transformation.
 
-Each per-service report contains the full per-service analysis (stack, conventions, quality scores, Watch/Preserve, proposed scoped artifacts).
+Write the global report first, then each per-service report. All writes complete before Step 3.
 
-**Workspace:** Save two levels:
-- `<workspace>/.claude/reports/claudboard-analysis-workspace.md` — global workspace summary (topology table, cross-service dependency graph, per-repo summary table with quality scores, global Watch findings, proposed global artifacts). Frontmatter includes `workspace: true` and `repos: [<service-dir-name>, ...]` and `libraries: [<library-dir-name>, ...]`.
-- `<workspace>/.claude/reports/claudboard-analysis-<repo-name>.md` — these were written by per-repo sub-agents during the parallelisation phase (Phase 1a protocol). The orchestrator verifies their presence here (see write-verification step) but does NOT re-write them. Use the service's directory basename as `<repo-name>`.
+**Workspace:**
+- Verify all per-repo sub-agent reports exist in `<workspace>/.claude/reports/` (written during the Phase 1a parallelisation protocol). If any are missing, recover them serially before proceeding.
+- Write `<workspace>/.claude/reports/claudboard-analysis-workspace.md` — global workspace summary (topology table, cross-service dependency graph, per-repo summary table with quality scores, global Watch findings, proposed global artifacts). Frontmatter includes `workspace: true`, `repos: [<service-dir-name>, ...]`, and `libraries: [<library-dir-name>, ...]`.
+- Per-repo reports were written by sub-agents — do NOT re-write them here. Only the workspace summary is written in this step.
 
 Each per-repo sub-agent report frontmatter must include `workspace_member: true` and `workspace_root: <absolute workspace path>`.
 
-After all workspace reports are verified on disk, print a path manifest:
+**If any Write tool call fails** (permission error, disk full, path conflict): report the error to the user and stop. Do not proceed to Step 3. Do not claim the analysis is saved.
 
-```
-Reports written:
-  <workspace>/.claude/reports/claudboard-analysis-workspace.md
-  <workspace>/.claude/reports/claudboard-analysis-<repo1>.md
-  <workspace>/.claude/reports/claudboard-analysis-<repo2>.md
-  ...
+### Step 3: Confirm save and ask about generation
 
-Run /claudboard-workspace-init (if not done) then /claudboard-workflow to generate the multi-repo feature-workflow skill.
-```
+After all writes succeed, confirm to the user:
 
-After saving, ask the user:
+> Analysis saved to:
+> - `.claude/reports/claudboard-analysis.md` (single-project / monorepo)
+> - or list all written paths (workspace)
 
-> Analysis saved. Would you like to generate artifacts now, or run `/generate` in a fresh session? (Fresh session recommended — analysis fills context with discovery data not needed during generation.)
+Then ask:
+
+> Would you like to generate artifacts now, or run `/generate` in a fresh session? (Fresh session recommended — analysis fills context with discovery data not needed during generation.)
 
 - If user chooses to generate now: proceed with `../claudboard-generate/SKILL.md` steps starting from Phase 2 (skip Phase 1 report loading — you already have the data).
-- If user defers: end with "Analysis saved to `.claude/reports/claudboard-analysis.md`. Run `/generate` in a fresh session when ready. For tech debt analysis, run `/techdebt`."
+- If user defers: end with "Run `/generate` in a fresh session when ready. For tech debt analysis, run `/techdebt`."
 
 ---
 
@@ -975,4 +1023,9 @@ After saving, ask the user:
 | `../claudboard/references/stack-detectors-{lang}.md` | Phase 1c Wide Scan — load language-specific file (java, typescript, python, go, rust, or dotnet) |
 | `../claudboard/references/pattern-catalog.md` | Phase 2 — pattern/anti-pattern identification |
 | `../claudboard/references/quality-signals.md` | Phase 2 — quality scoring, rule depth, skill triggers |
-| `../claudboard/references/workflow-signals.md` | Phase 1 (after Wide Scan) — workflow signal detection heuristics |
+| `../claudboard/references/workflow-signals.md` | Phase 1 (after Wide Scan) — workflow signal schema, sub-catalog pointers, shared-lib and auth-perimeter detection |
+| `../claudboard/references/edges/sync-rpc.md` | Phase 1 — REST/gRPC/tRPC transport extraction (workspace mode, edge detection) |
+| `../claudboard/references/edges/messaging.md` | Phase 1 — Kafka/Solace/AMQP/JMS messaging extraction (workspace mode, edge detection) |
+| `../claudboard/references/edges/streaming.md` | Phase 1 — WebSocket/SSE/RSocket extraction (workspace mode, edge detection) |
+| `../claudboard/references/edges/graphql.md` | Phase 1 — GraphQL client/server extraction (workspace mode, edge detection) |
+| `../claudboard/references/patterns/architectural.md` | Phase 1 (after Wide Scan) — architectural pattern detection (all modes) |

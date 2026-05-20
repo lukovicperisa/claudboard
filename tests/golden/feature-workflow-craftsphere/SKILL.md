@@ -116,6 +116,8 @@ Main agent (Sonnet 4.6)
 
 ## Phase 1: Ticket, clarify, specify, and plan
 
+Call `mcp__bosch__phase_start` with `{ num: 1, title: "Ticket · Clarify · Specify · Plan" }`.
+
 This phase creates the JIRA ticket immediately, then produces two
 deliverables before any code is written: a complete BDD specification and
 a detailed technical execution plan. Both live in the `specs/` directory
@@ -403,17 +405,37 @@ The agent will emit a JSON result block:
 If `risks` is non-empty, include them in the gate presentation (1d) so the
 user can acknowledge or resolve them.
 
-### 1d. Gate — user reviews spec and plan
+### 1d. Gate — spec and plan review
 
-Present the spec files and execution plan to the user. This is the **only
-human gate** in the workflow. Specifically ask:
+**Request human approval via the bosch MCP server:**
 
-- Does the spec cover all scenarios?
-- Are the software contracts (API shape, DB entities, permissions) correct?
-- Is the execution plan's checkpoint ordering and scope correct?
-- Any missing edge cases or concerns?
+Read the full text of all spec files in `specDir` and the execution plan,
+then call the gate tool:
 
-**After the user confirms**, log the requirement refinement work and record
+```
+Call mcp__bosch__gate_request with:
+{
+  "kind": "spec+plan",
+  "payload": {
+    "ticket": "<ticketKey>",
+    "spec": "<full text of all BDD spec files from specDir, concatenated>",
+    "plan": "<full text of execution-plan.md>"
+  }
+}
+```
+
+The `gate_request` tool suspends the workflow and delivers the spec + plan to
+the bosch web UI for human review. It returns only when the user resolves the gate.
+
+**Branch on the gate result:**
+
+**If result is `"approved"`:** proceed to time-logging below, then Phase 2.
+
+**If result is `{ status: "rejected", changes: "<feedback>" }`:** re-invoke
+sdd-expert-agent and architect-agent with the change request, then re-issue
+`mcp__bosch__gate_request`. Repeat until approved.
+
+**After the gate is approved**, log the requirement refinement work and record
 the checkpoint timestamp before proceeding autonomously.
 
 Calculate elapsed time since workflow start:
@@ -455,9 +477,13 @@ CHECKPOINT=$(date +%s)
 Once confirmed and worklog is recorded, execute Phases 2–7 autonomously
 without pausing.
 
+Call `mcp__bosch__phase_complete` with `{ num: 1 }`.
+
 ---
 
 ## Phase 2: Create branch
+
+Call `mcp__bosch__phase_start` with `{ num: 2, title: "Create Branch" }`.
 
 Use `ticketKey` from Phase 1. Derive a short kebab-case slug from the
 ticket summary (3-5 words, no area prefix). Do not ask the user.
@@ -497,9 +523,13 @@ The agent will emit a JSON result block:
 }
 ```
 
+Call `mcp__bosch__phase_complete` with `{ num: 2 }`.
+
 ---
 
 ## Phase 3: Develop and test
+
+Call `mcp__bosch__phase_start` with `{ num: 3, title: "Develop and Test" }`.
 
 All implementation work is delegated to the implementation-agent. Read the
 agent instructions from

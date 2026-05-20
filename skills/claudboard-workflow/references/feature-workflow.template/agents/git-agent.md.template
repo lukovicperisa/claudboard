@@ -76,6 +76,32 @@ data), emit an error result and stop. Do NOT attempt recovery.
 
 ---
 
+## Branch policy awareness
+
+<!-- IF REPO_ADO -->
+**Azure DevOps branch policies:** The target repository may have ADO branch
+policies configured (e.g., required reviewer count, linked work items,
+build validation). These policies are enforced server-side when the PR is
+created — they do not block push. If the push succeeds but the PR creation
+fails with a policy violation, document the policy name and required action
+in the error result. Do NOT attempt to mutate ADO branch policies.
+<!-- ENDIF -->
+
+<!-- IF REPO_GITHUB -->
+**GitHub Branch Protection Rules / Rulesets:** The target branch may have
+Branch Protection Rules or Rulesets configured (e.g., required status
+checks, required reviews, force-push restrictions). These are enforced at
+the remote — they may cause a push to be rejected. If a push fails with a
+branch protection error, document the specific rule that blocked it in the
+error result. Do NOT attempt to mutate Branch Protection Rules or Rulesets.
+
+If a protected branch is encountered during sync-and-push, include an
+advisory note in the error result so the PR agent can document it in the
+PR description body.
+<!-- ENDIF -->
+
+---
+
 ## Action: `create-branch`
 
 Create a new feature branch from the current HEAD.

@@ -104,22 +104,100 @@ If it does, stop with this exact message:
 
 ### 1d. MCP detection
 
-Inspect MCP configuration to determine tool availability:
+Detect which of the four supported MCP backends are available across two
+independent dimensions (tracker × repo). Load `references/block-catalog.md`
+for the complete detection keyword rules. Apply project-level precedence.
 
-1. **Project-level first:** read `.mcp.json` in the project root if it exists.
-2. **User-level fallback:** read `~/.claude/mcp_servers.json` or `~/.claude.json`
-   (whichever exists).
+**Step 1: Read MCP configuration files**
 
-Set capability flags based on what you find:
+Read each config in order, holding results separately per source:
 
-- `JIRA_AVAILABLE = true` — if an Atlassian MCP server entry is present in any
-  inspected config (look for server names/keys containing "atlassian", "jira",
-  or "confluence", or command/args referencing `@atlassian/`).
-- `ADO_AVAILABLE = true` — if an Azure DevOps MCP server entry is present (look
-  for server names/keys containing "azure-devops", "ado", or command/args
-  referencing `azure-devops-mcp` or `@microsoft/azure`).
+1. Project-level: `.mcp.json` in the project root (or workspace root in workspace
+   mode). If found, parse the `mcpServers` object.
+2. User-level: `~/.claude/mcp_servers.json` (if it exists, parse `mcpServers`).
+3. User-level: `~/.claude.json` (if it exists, look for `mcpServers` key).
 
-Record both flags. Accumulate any missing-MCP warnings for Phase 5.
+**Step 2: Apply detection keyword rules (case-insensitive)**
+
+For each MCP server entry, inspect the server key/name and command/args fields:
+
+| Backend | Flag | Matches |
+|---------|------|---------|
+| Atlassian Jira | `TRACKER_JIRA` | name contains "atlassian", "jira", or "confluence"; OR args reference `@atlassian/` |
+| Bosch Track & Release | `TRACKER_TR` | name contains "bosch-jira-mcp" or "bosch-jira"; OR args reference `bosch-jira-mcp` binary |
+| Azure DevOps | `REPO_ADO` | name contains "azure-devops" or "ado"; OR args reference `azure-devops-mcp` or `@microsoft/azure` |
+| GitHub | `REPO_GITHUB` | name contains "github"; OR args reference `github-mcp-server` or `@modelcontextprotocol/server-github` |
+
+For each match, record: flag, source (project / user), server name and config path.
+
+Emit a warning when a match occurs via command/args only (indirect match), so
+the user can verify the detection was intentional.
+
+**Step 3: Apply project-level precedence**
+
+Within each dimension, if a flag is detected in the project-level `.mcp.json`,
+it takes precedence over any conflicting user-level detection in the same
+dimension. Suppress the user-level entry for that dimension.
+
+**Step 4: Resolve mutually-exclusive dimensions**
+
+_Tracker dimension:_
+
+- **Both** `TRACKER_JIRA` and `TRACKER_TR` detected → prompt:
+  ```
+  Two tracker MCPs detected. Which should the generated workflow target?
+  [1] Atlassian Jira         (detected in: <source path>)
+  [2] Bosch Track & Release  (detected in: <source path>)
+  ```
+  Set the chosen flag true, the other false. Record "chosen via prompt".
+
+- **Only one** detected → set it true, the other false.
+
+- **Neither** detected → both false. Emit warning (accumulate for Phase 5 and
+  completion report):
+  ```
+  ⚠ No tracker MCP detected. Generated feature-workflow has no ticket
+    integration. To enable: configure Atlassian Jira MCP or Bosch T&R MCP,
+    then re-run /claudboard-workflow.
+  ```
+
+_Repo dimension (apply same logic):_
+
+- **Both** `REPO_ADO` and `REPO_GITHUB` detected → prompt:
+  ```
+  Two repo MCPs detected. Which should the generated workflow target?
+  [1] Azure DevOps  (detected in: <source path>)
+  [2] GitHub        (detected in: <source path>)
+  ```
+  Set the chosen flag true, the other false. Record "chosen via prompt".
+
+- **Only one** detected → set it true, the other false.
+
+- **Neither** detected → both false. Emit warning:
+  ```
+  ⚠ No repo MCP detected. Generated feature-workflow has no PR creation.
+    To enable: configure Azure DevOps MCP or GitHub MCP, then re-run
+    /claudboard-workflow.
+  ```
+
+**Step 5: Halt-on-conflict guard**
+
+After resolution, if both flags in either dimension are still true (should not
+occur if the user answered the prompt, but guards against bad state):
+
+```
+Error: precedence resolution failed — both flags in the [tracker|repo] dimension
+are true after resolution. Cannot generate a deterministic workflow.
+Aborting.
+```
+
+**Step 6: Record detection state**
+
+Accumulate detection results for the Phase 7 completion report "MCP detection"
+section. For each of the four backends, record:
+- Detected / not detected
+- Source config path where found (or "—" if not detected)
+- Resolution: auto / chosen via prompt / overridden by project-level
 
 ---
 
@@ -128,7 +206,7 @@ Record both flags. Accumulate any missing-MCP warnings for Phase 5.
 Gather values for `config.json` and substitution variables. Work through each
 source in order — auto-detect first, inherit from siblings second, prompt last.
 
-### 2a. ADO auto-detect from git remote
+### 2a. Auto-detect from git remote
 
 Run:
 
@@ -136,7 +214,7 @@ Run:
 git remote -v
 ```
 
-Parse the output for Azure DevOps remote URL patterns:
+**Azure DevOps patterns** (only when `REPO_ADO = true`):
 
 - `https://dev.azure.com/{org}/{project}/_git/{repo}` (modern)
 - `https://{org}.visualstudio.com/{project}/_git/{repo}` (legacy)
@@ -148,7 +226,22 @@ If a match is found, extract and set:
 - `azureDevOps.repositoryName` — the `{repo}` segment (record for display;
   `repositoryId` is a UUID and cannot be auto-detected)
 
-Inform the user of what was auto-detected before moving on.
+**GitHub patterns** (only when `REPO_GITHUB = true`):
+
+- `git@github.com:{owner}/{repo}.git` (SSH)
+- `https://github.com/{owner}/{repo}` or `https://github.com/{owner}/{repo}.git` (HTTPS)
+
+If a match is found, extract and set:
+
+- `github.owner` — the `{owner}` segment (GitHub username or org)
+- `github.repo` — the `{repo}` segment (repository name, without `.git`)
+
+Record `github.linkingKeyword = "Closes"` as the default (can be overridden in
+Phase 2c if the user's GitHub workflow uses a different keyword like `Fixes` or
+`Resolves`).
+
+Inform the user of what was auto-detected before moving on. Unrecognised remote
+URLs are silently skipped — missing values will be prompted in Phase 2c.
 
 ### 2b. Sibling-repo inheritance
 
@@ -166,8 +259,8 @@ Inherit shared values from sibling? [y/n]
 If y, which sibling to inherit from: [list if multiple]
 ```
 
-Load the reference file `references/jira-config-prompts.md` for the exact
-inheritance offer wording.
+Load the reference file `references/tracker-config-prompts.md` and
+`references/repo-config-prompts.md` for the exact inheritance offer wording.
 
 Fields that CAN be inherited from siblings:
 - `jira.cloudId`
@@ -177,6 +270,8 @@ Fields that CAN be inherited from siblings:
 - `jira.customFields.acceptanceCriteria`
 - `azureDevOps.org` (if not auto-detected)
 - `azureDevOps.project` (if not auto-detected)
+- `tr.baseUrl`, `tr.projectKey` (if T&R sibling exists)
+- `github.owner`, `github.repo` (if GitHub sibling exists and not auto-detected)
 
 Fields that MUST NOT be inherited (always per-repo):
 - `azureDevOps.repositoryId`
@@ -185,13 +280,16 @@ Fields that MUST NOT be inherited (always per-repo):
 ### 2c. Prompt for remaining fields
 
 For each `config.json` field not resolved by auto-detect or inheritance, prompt
-the user using the prompt text from `references/jira-config-prompts.md`.
+the user using the prompt text from `references/tracker-config-prompts.md` (for
+tracker fields) and `references/repo-config-prompts.md` (for repo fields).
 
 Every prompt must offer a "stub with TODO" escape:
 
 > Type 's' to stub with [TODO: FIELD_NAME] and continue.
 
 Fields requiring prompts (when not auto-detected/inherited):
+
+**Tracker fields (TRACKER_JIRA only):**
 
 | Field | Default |
 |-------|---------|
@@ -200,26 +298,67 @@ Fields requiring prompts (when not auto-detected/inherited):
 | `jira.urlBase` | none |
 | `jira.customFields.sprint` | `customfield_10001` |
 | `jira.customFields.acceptanceCriteria` | `customfield_12206` |
-| `azureDevOps.repositoryId` | none (always prompted) |
-| `git.branchTypes` | `["feature","bugfix","hotfix"]` |
-| `git.branchPattern` | `{type}/{ticket}/{slug}` if JIRA_AVAILABLE else `{type}/{slug}` |
-| `git.ticketRegex` | `[A-Z]+-[0-9]+` |
+| `jira.transitions.start` | `In Progress` |
+| `jira.transitions.success` | `In Review` |
+| `jira.transitions.failure` | `Blocked` |
 
-Skip Jira fields entirely if `JIRA_AVAILABLE = false` (stub them all with TODO).
-Skip ADO fields entirely if `ADO_AVAILABLE = false` (stub them all with TODO).
+Skip all Jira fields if `TRACKER_JIRA = false`.
+
+**Tracker fields (TRACKER_TR only):**
+
+| Field | Default |
+|-------|---------|
+| `tr.baseUrl` | none (e.g., `https://track.example.bosch.com`) |
+| `tr.projectKey` | none (e.g., `MEAS`) |
+| `tr.transitions.start` | `In Progress` |
+| `tr.transitions.success` | `In Review` |
+| `tr.transitions.failure` | `Blocked` |
+| `tr.transitions.pause` | `null` |
+
+Skip all T&R fields if `TRACKER_TR = false`.
+
+**Repo fields (REPO_ADO only):**
+
+| Field | Default |
+|-------|---------|
+| `azureDevOps.repositoryId` | none (always prompted, never inherited) |
+
+Skip all ADO fields if `REPO_ADO = false`.
+
+**Repo fields (REPO_GITHUB only):**
+
+| Field | Default |
+|-------|---------|
+| `github.owner` | auto-detected from git remote |
+| `github.repo` | auto-detected from git remote |
+| `github.linkingKeyword` | `Closes` |
+
+Prompt for `github.owner` and `github.repo` only if not auto-detected in 2a.
+Always offer the user the chance to override the `linkingKeyword` default
+(`Closes`) — some teams use `Fixes` or `Resolves`.
+
+Skip all GitHub fields if `REPO_GITHUB = false`.
+
+**Shared git fields (always prompted):**
+
+| Field | Default |
+|-------|---------|
+| `git.branchTypes` | `["feature","bugfix","hotfix"]` |
+| `git.branchPattern` | `{type}/{ticket}/{slug}` if either tracker active, else `{type}/{slug}` |
+| `git.ticketRegex` | `[A-Z]+-[0-9]+` |
 
 ---
 
 ## Phase 3: Capability-Flag Resolution
 
-Resolve all 10 v1 capability flags from workflow signals in the analysis report
-and from runtime checks. Load `references/block-catalog.md` for the full
-resolution table.
+Resolve all 18 v1 capability flags from workflow signals and architectural patterns in the analysis report, and from runtime checks. Load `references/block-catalog.md` for the full resolution table.
 
 | Flag | Source | Resolution logic |
 |------|--------|-----------------|
-| `JIRA_AVAILABLE` | MCP config (Phase 1d) | Set in Phase 1d |
-| `ADO_AVAILABLE` | MCP config (Phase 1d) | Set in Phase 1d |
+| `TRACKER_JIRA` | MCP config (Phase 1d) | Set in Phase 1d; mutually exclusive with `TRACKER_TR` |
+| `TRACKER_TR` | MCP config (Phase 1d) | Set in Phase 1d; mutually exclusive with `TRACKER_JIRA` |
+| `REPO_ADO` | MCP config (Phase 1d) | Set in Phase 1d; mutually exclusive with `REPO_GITHUB` |
+| `REPO_GITHUB` | MCP config (Phase 1d) | Set in Phase 1d; mutually exclusive with `REPO_ADO` |
 | `WORKSPACE_MODE` | Analysis report | `true` if report frontmatter has `workspace: true` or report body contains "Workspace mode" section |
 | `CROSS_SERVICE_EDGES` | Workflow Signals subsection | `true` if Workflow Signals lists ≥1 cross-service edge |
 | `SHARED_LIB` | Workflow Signals subsection | `true` if Workflow Signals lists ≥1 shared library with `consumer_count ≥ 2` |
@@ -228,11 +367,23 @@ resolution table.
 | `MONGODB` | Analysis report | `true` if Spring Data MongoDB detected (look for `spring-data-mongodb` or `@Document`) |
 | `JPA` | Analysis report | `true` if Spring Data JPA / Hibernate detected (look for `spring-data-jpa`, `@Entity`, `@Repository`) |
 | `KAFKA` | Analysis report | `true` if Kafka producers/consumers detected (look for `spring-kafka`, `@KafkaListener`, `KafkaTemplate`) |
+| `RABBITMQ` | Analysis report / Workflow Signals | `true` if RabbitMQ detected: `@RabbitListener`, `RabbitTemplate`, `spring-rabbit`, or `protocol: rabbitmq` in `cross_service_edges` |
+| `JMS` | Analysis report / Workflow Signals | `true` if JMS detected: `@JmsListener`, `JmsTemplate`, `spring-boot-starter-activemq`, or `protocol: jms` in `cross_service_edges` |
+| `GRAPHQL` | Analysis report / Workflow Signals | `true` if GraphQL detected: `spring-graphql`, `netflix-dgs`, `@QueryMapping`, Apollo, `urql`, `graphql-request`, or `protocol: graphql` in `cross_service_edges` |
+| `WEBSOCKET` | Analysis report / Workflow Signals | `true` if WebSocket/streaming detected: `spring-boot-starter-websocket`, `socket.io`, `ws`, `rsocket-*`, or `protocol` in `{websocket,stomp,socketio,sse,rsocket}` in `cross_service_edges` |
+| `SAGA` | `architectural_patterns` subsection | `true` if `architectural_patterns` list contains an entry with `type: saga`. Resolve sub-style from `style` field: `orchestration` or `choreography`. Default `false` when `architectural_patterns` absent. |
+| `CQRS` | `architectural_patterns` subsection | `true` if `architectural_patterns` contains `type: cqrs`. Default `false` when subsection absent. |
+| `OUTBOX` | `architectural_patterns` subsection | `true` if `architectural_patterns` contains `type: outbox`. Default `false` when subsection absent. |
+| `CIRCUIT_BREAKER` | `architectural_patterns` subsection | `true` if `architectural_patterns` contains `type: circuit-breaker`. Extract `library` field for `{{CIRCUIT_BREAKER_LIBRARY}}` substitution. Default `false` when subsection absent. |
 
 **Flags with missing Workflow Signals:** If the "Workflow Signals" subsection is
 absent (warned in Phase 1b), default `WORKSPACE_MODE`, `CROSS_SERVICE_EDGES`,
-`SHARED_LIB`, `AUTH_PERIMETER` all to `false` and note them as "defaulted off
-(no workflow signals)".
+`SHARED_LIB`, `AUTH_PERIMETER`, `RABBITMQ`, `JMS`, `GRAPHQL`, `WEBSOCKET` all
+to `false` and note them as "defaulted off (no workflow signals)".
+
+**Flags with missing Architectural Patterns subsection:** If the "Architectural Patterns" subsection is absent (old-schema report), default `SAGA`, `CQRS`, `OUTBOX`, `CIRCUIT_BREAKER` all to `false` and emit a single warning:
+
+> "Architectural patterns subsection absent — SAGA, CQRS, OUTBOX, CIRCUIT_BREAKER flags defaulted to false. Re-run `/analyse` to enable pattern-based blocks."
 
 Record every resolved flag value and its evidence source for display in Phase 5.
 
@@ -309,15 +460,17 @@ Before writing any files, present a complete summary and wait for user approval.
       ├── design-reviewer.md
       ├── git-agent.md
       ├── implementation-agent.md
-      ├── jira-agent.md       ← enabled (JIRA_AVAILABLE=true)
-      ├── pr-agent.md
+      ├── jira-agent.md          ← only if TRACKER_JIRA=true
+      ├── tr-agent.md            ← only if TRACKER_TR=true
+      ├── pr-agent-ado.md        ← only if REPO_ADO=true
+      ├── pr-agent-github.md     ← only if REPO_GITHUB=true
       ├── sdd-expert-agent.md
       └── spec-reviewer.md
 
 ### Capability blocks:
-  ENABLED:  JIRA_AVAILABLE, JPA, AUTH_PERIMETER
-  DISABLED: ADO_AVAILABLE, WORKSPACE_MODE, CROSS_SERVICE_EDGES, SHARED_LIB,
-            MEMORIES_PRESENT, MONGODB, KAFKA
+  ENABLED:  TRACKER_JIRA, JPA, AUTH_PERIMETER
+  DISABLED: TRACKER_TR, REPO_ADO, REPO_GITHUB, WORKSPACE_MODE, CROSS_SERVICE_EDGES,
+            SHARED_LIB, MEMORIES_PRESENT, MONGODB, KAFKA
 
 ### Resolved config:
   jira.cloudId:              a1b2c3d4-...
@@ -425,8 +578,10 @@ Verify the write succeeded before moving to the next file.
 | `agents/design-reviewer.md.template` | `.claude/skills/feature-workflow/agents/design-reviewer.md` |
 | `agents/git-agent.md.template` | `.claude/skills/feature-workflow/agents/git-agent.md` |
 | `agents/implementation-agent.md.template` | `.claude/skills/feature-workflow/agents/implementation-agent.md` |
-| `agents/jira-agent.md` (verbatim) | `.claude/skills/feature-workflow/agents/jira-agent.md` (only if JIRA_AVAILABLE) |
-| `agents/pr-agent.md.template` | `.claude/skills/feature-workflow/agents/pr-agent.md` |
+| `agents/jira-agent.md` (verbatim, TRACKER_JIRA only) | `.claude/skills/feature-workflow/agents/jira-agent.md` |
+| `agents/tr-agent.md` (verbatim, TRACKER_TR only) | `.claude/skills/feature-workflow/agents/tr-agent.md` |
+| `agents/pr-agent-ado.md` (verbatim, REPO_ADO only) | `.claude/skills/feature-workflow/agents/pr-agent-ado.md` |
+| `agents/pr-agent-github.md` (verbatim, REPO_GITHUB only) | `.claude/skills/feature-workflow/agents/pr-agent-github.md` |
 | `agents/sdd-expert-agent.md.template` | `.claude/skills/feature-workflow/agents/sdd-expert-agent.md` |
 | `agents/spec-reviewer.md.template` | `.claude/skills/feature-workflow/agents/spec-reviewer.md` |
 | `references/claude-pricing.md` (verbatim) | `.claude/skills/feature-workflow/references/claude-pricing.md` |
@@ -437,9 +592,12 @@ Verify the write succeeded before moving to the next file.
 | `scripts/load-repo-context.sh` (verbatim, WORKSPACE_MODE only) | `.claude/skills/feature-workflow/scripts/load-repo-context.sh` |
 
 **Verbatim files** (no `.template` suffix, no rendering needed): copy as-is.
-`jira-agent.md` is verbatim but conditional — only write it when
-`JIRA_AVAILABLE = true`. `load-repo-context.sh` is verbatim but conditional —
-only write it when `WORKSPACE_MODE = true`.
+Conditional verbatim files — write only when the corresponding flag is true:
+- `jira-agent.md` → only when `TRACKER_JIRA = true`
+- `tr-agent.md` → only when `TRACKER_TR = true`
+- `pr-agent-ado.md` → only when `REPO_ADO = true`
+- `pr-agent-github.md` → only when `REPO_GITHUB = true`
+- `load-repo-context.sh` → only when `WORKSPACE_MODE = true`
 
 ### 6c. Upgrade path footer
 
@@ -488,19 +646,70 @@ After all files are written, present a full completion report.
   .claude/skills/feature-workflow/agents/spec-reviewer.md
 
 ### Capability blocks:
-  Enabled:  JIRA_AVAILABLE, JPA, AUTH_PERIMETER
-  Disabled: ADO_AVAILABLE, WORKSPACE_MODE, CROSS_SERVICE_EDGES, SHARED_LIB,
-            MEMORIES_PRESENT, MONGODB, KAFKA
+  Enabled:  TRACKER_JIRA, JPA, AUTH_PERIMETER
+  Disabled: REPO_ADO, REPO_GITHUB, TRACKER_TR, WORKSPACE_MODE, CROSS_SERVICE_EDGES,
+            SHARED_LIB, MEMORIES_PRESENT, MONGODB, KAFKA
+
+### MCP detection:
+
+| Backend | Result | Source |
+|---------|--------|--------|
+| TRACKER_JIRA (Atlassian Jira) | detected | .mcp.json |
+| TRACKER_TR (Bosch T&R) | not detected | — |
+| REPO_ADO (Azure DevOps) | not detected | — |
+| REPO_GITHUB (GitHub) | not detected | — |
+
+[list any precedence prompts answered and any indirect-match warnings]
+
+[IF TRACKER_TR active, append:]
+### T&R v1 limitations:
+
+The generated workflow uses Bosch Track & Release via bosch-jira-mcp. The
+following capabilities are not available in v1 due to limitations in the
+underlying MCP tool surface (6 tools: jira_search, jira_get_issue,
+jira_add_comment, jira_transition, jira_update_issue, jira_get_myself):
+
+1. **No auto-create ticket (Path A only)** — The T&R MCP has no issue-creation
+   tool. Use `/start-feature TR-XXXXX` with an existing ticket key.
+   Lifts when: `jira_create_issue` lands in bosch-jira-mcp.
+
+2. **No sprint assignment** — T&R MCP cannot write custom fields. Sprint field
+   is skipped; `sprintAssigned: false` is noted in the fetchAndPrepare result.
+   Lifts when: `jira_update_issue` gains custom-field write support.
+
+3. **No worklog** — T&R MCP has no worklog tool. Refinement and implementation
+   time are folded into the Phase 7 final summary comment body instead.
+   Lifts when: `jira_add_worklog` lands in bosch-jira-mcp.
+
+4. **AC inlined in description** — Acceptance Criteria are written under a
+   `## Acceptance Criteria` heading in the ticket description body, not in a
+   separate custom field.
+   Lifts when: `jira_update_issue` gains custom-field write support.
+
+5. **Labels via read-modify-write (non-atomic)** — T&R's `jira_update_issue`
+   labels semantics are REPLACE, not the Jira REST `update.labels[{add:…}]`
+   atomic add. The agent reads current labels, computes the union, then writes
+   the merged set. Low concurrency risk for single-user workflows.
+   Lifts when: `jira_update_issue` gains atomic label-add support.
+
+[IF migrated from legacy flags, append:]
+### Migrated from legacy flag names:
+
+This generation detected an existing feature-workflow directory with the older
+flag naming convention. The following flag renames are now in effect:
+
+| Old name | New name |
+|----------|----------|
+| `JIRA_AVAILABLE` | `TRACKER_JIRA` |
+| `ADO_AVAILABLE` | `REPO_ADO` |
+
+Any `<!-- IF JIRA_AVAILABLE -->` or `<!-- IF ADO_AVAILABLE -->` blocks in hand-
+edited skill files should be updated to use the new names.
 
 ### Config stubs (fields left as TODO — fill before first use):
-  azureDevOps.repositoryId — Find in Azure DevOps under Repos → [Repo Name] →
-                              Clone → HTTPS URL; the UUID is in the URL or use
-                              `az repos show --repository <name>` CLI.
 
-### MCP warnings:
-  ⚠ ADO_AVAILABLE = false — Azure DevOps MCP not detected. ADO-specific phases
-    in the generated skill are stubbed. To enable, configure the Azure DevOps
-    MCP server and re-generate.
+[list any [TODO: ...] placeholders written to config.json with hints for where
+to find the correct values]
 
 **Next steps:** Try `/start-feature` on a small ticket to validate the wiring.
 ```
@@ -560,13 +769,41 @@ After all files are written, present a full completion report.
 - **No source code modifications.** Only `.claude/` is touched.
 - **Verbatim files are not templated.** Do not substitute variables in files
   without the `.template` suffix.
-- **jira-agent.md is conditional.** Write it only when `JIRA_AVAILABLE = true`.
+- **Tracker agent files are conditional.** Write `jira-agent.md` only when
+  `TRACKER_JIRA = true`; write `tr-agent.md` only when `TRACKER_TR = true`.
+  Never write both.
+- **Repo agent files are conditional.** Write `pr-agent-ado.md` only when
+  `REPO_ADO = true`; write `pr-agent-github.md` only when `REPO_GITHUB = true`.
+  Never write both.
+
+## Backend Support
+
+The generator supports 4 MCP backends across 2 independent dimensions:
+
+| Dimension | Backend | Flag | Detection |
+|-----------|---------|------|-----------|
+| Tracker | Atlassian Jira | `TRACKER_JIRA` | Server name contains "atlassian"/"jira"/"confluence" or args reference `@atlassian/` |
+| Tracker | Bosch Track & Release | `TRACKER_TR` | Server name contains "bosch-jira-mcp" or args reference `bosch-jira-mcp` |
+| Repo | Azure DevOps | `REPO_ADO` | Server name contains "azure-devops"/"ado" or args reference `azure-devops-mcp`/`@microsoft/azure` |
+| Repo | GitHub | `REPO_GITHUB` | Server name contains "github" or args reference `github-mcp-server`/`@modelcontextprotocol/server-github` |
+
+**Mutual-exclusion rule:** Within each dimension, at most one flag may be true.
+If both MCPs in a dimension are detected, the user is prompted to choose.
+If neither is detected, that dimension's phases are omitted from the generated
+workflow and a warning is emitted.
+
+**T&R v1 limitations:** When `TRACKER_TR` is active, the following capabilities
+are unavailable (each tied to a missing tool in bosch-jira-mcp v1.0.0):
+auto-create, worklog, sprint assignment, AC custom field, atomic label add.
+These are documented in the completion report and explicitly handled (not
+silently skipped) in `tr-agent.md`.
 
 ## Reference Files
 
 | File | When to load |
 |------|-------------|
-| `references/block-catalog.md` | Phase 3 — flag resolution rules for all 10 v1 flags |
-| `references/substitution-catalog.md` | Phase 4 — variable source fields, fallbacks, examples for all 18 vars |
-| `references/jira-config-prompts.md` | Phase 2 — exact prompt text, defaults, inheritance UI, stub escape wording |
+| `references/block-catalog.md` | Phase 3 — flag resolution rules for all v1 flags |
+| `references/substitution-catalog.md` | Phase 4 — variable source fields, fallbacks, examples |
+| `references/tracker-config-prompts.md` | Phase 2 — prompt text for Jira and T&R config fields |
+| `references/repo-config-prompts.md` | Phase 2 — prompt text for ADO and GitHub config fields |
 | `references/feature-workflow.template/*` | Phase 6 — template files to render |

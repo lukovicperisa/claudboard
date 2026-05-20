@@ -3,12 +3,14 @@ name: jira-agent
 model: claude-haiku-4-5-20251001
 description: >
   Manage JIRA tickets for the project configured in
-  `.claude/skills/feature-workflow/config.json`: create with pre-computed
+  `.claude/skills/feature-workflow/config.json`: create tickets with additive
   labels, prepare existing tickets, update descriptions, log work, add
-  comments, apply labels, and transition status via lifecycle-state names.
-  Receives an action type via INPUT CONTEXT and returns a JSON result block.
+  comments, add labels additively via shell script, and transition status via
+  lifecycle-state names. Receives an action type via INPUT CONTEXT and returns
+  a JSON result block.
 allowedTools:
   - Read
+  - Bash
   - mcp__atlassian__searchJiraIssuesUsingJql
   - mcp__atlassian__createJiraIssue
   - mcp__atlassian__getJiraIssue
@@ -62,11 +64,13 @@ calling agent can parse it reliably.
 ## Action: `create`
 
 Create a new JIRA ticket, transition it to the `start` lifecycle state,
-assign it to the current sprint, assign it to yourself, and set labels.
+assign it to the current sprint, assign it to yourself, and apply the
+additive label set via `scripts/jira-add-labels.sh`.
 
 INPUT CONTEXT will include: `scope`, `area`, `acceptanceCriteria`, `context`,
 `issueType` (Task or Story), `priority` (Critical, High, Medium, Low),
-`labels` (fully-resolved array computed by the orchestrator)
+`labelsToAdd` (additive label array — AI labels plus resolved area label,
+computed by the orchestrator)
 
 ### Step 1: Find the current sprint
 
@@ -91,7 +95,6 @@ Parameters:
   summary: "[<AREA>] <Short goal description — max 5-6 words>"
   description: <use template below>
   additional_fields: {
-    "labels": <labels array from INPUT CONTEXT — write exactly as provided>,
     "priority": {"name": "<priority from INPUT CONTEXT>"},
     "<config:acField>": "<acceptance criteria from INPUT CONTEXT — plain text, one criterion per line>"
   }
@@ -103,9 +106,9 @@ Parameters:
 - `[DevOps]` — infrastructure, pipelines, Helm
 - `[Docs]` — documentation
 
-**Labels:** Use the `labels` array from INPUT CONTEXT exactly as provided.
-Do NOT add, remove, or modify labels — the orchestrator has already computed
-the correct set.
+**Labels:** Do NOT pass labels in `additional_fields`. Labels are applied
+after ticket creation via `addLabels` (Step 4) using the additive script —
+this ensures preservation is structural, not dependent on the create call.
 
 **Ticket description template** (goal-oriented, not implementation):
 
@@ -166,7 +169,26 @@ issueKey: <ticket key>
 fields: {"assignee": {"accountId": "<your accountId>"}}
 ```
 
-### Output
+### Step 4: Apply additive labels
+
+Apply the `labelsToAdd` array from INPUT CONTEXT using the additive label
+script. Construct one `--add <label>` argument per entry:
+
+```
+Tool: Bash
+command: bash .claude/skills/feature-workflow/scripts/jira-add-labels.sh \
+  --ticket <ticket key> \
+  --add <label1> --add <label2> ...
+```
+
+The script requires `JIRA_EMAIL` and `JIRA_API_TOKEN` to be set in the
+environment. If the script exits non-zero, capture the stderr and return
+an error result block (see error output format below) instead of a success
+result. Do NOT report success if the script fails.
+
+Parse the script's stdout JSON on success to populate the output block.
+
+### Output (success)
 
 ```json
 {
@@ -176,13 +198,25 @@ fields: {"assignee": {"accountId": "<your accountId>"}}
 }
 ```
 
+### Output (addLabels step failed)
+
+```json
+{
+  "action": "create",
+  "ticketKey": "<TICKET_KEY>",
+  "ticketUrl": "<config:urlBase>/browse/<TICKET_KEY>",
+  "labelsApplied": false,
+  "error": "<one-line summary from script stderr>",
+  "scriptStderr": "<full stderr output>"
+}
+```
+
 ---
 
 ## Action: `fetchAndPrepare`
 
 Fetch an existing ticket, transition it to the `start` lifecycle state,
-assign it to the current sprint, and assign it to yourself. Return the
-ticket's current labels so the orchestrator can compute the merged label set.
+assign it to the current sprint, and assign it to yourself.
 
 INPUT CONTEXT will include: `ticketKey`
 
@@ -197,7 +231,6 @@ cloudId: "<config:cloudId>"
 Extract:
 - Current status (from `fields.status.name`)
 - Current description (from `fields.description`)
-- Current labels (from `fields.labels`) — if absent or null, treat as `[]`
 
 Determine `existingDescription`: `true` if the description is non-empty and
 contains meaningful content (more than a placeholder), `false` otherwise.
@@ -254,47 +287,68 @@ fields: {"assignee": {"accountId": "<your accountId>"}}
 
 ### Output
 
-Return the existing labels in the result so the orchestrator can compute the
-merged label set. If the ticket has no labels, return an empty array — do NOT
-omit the field.
-
 ```json
 {
   "action": "fetchAndPrepare",
   "ticketKey": "<TICKET_KEY>",
   "ticketUrl": "<config:urlBase>/browse/<TICKET_KEY>",
   "existingDescription": true,
-  "existingLabels": ["Collaboration"],
   "currentStatus": "<current Jira status name after transition>"
 }
 ```
 
 ---
 
-## Action: `applyLabels`
+## Action: `addLabels`
 
-Write a fully-resolved labels array to the ticket. The orchestrator has
-already computed the correct merged set — write it exactly as provided.
+Additively apply a set of labels to an existing ticket by running
+`scripts/jira-add-labels.sh`. The script calls Jira's native
+`update.labels[{add:...}]` REST operation, which cannot remove existing
+labels. This is the only mechanism by which the feature-workflow writes
+labels — no `editJiraIssue` with `fields.labels` is ever used.
 
-INPUT CONTEXT will include: `ticketKey`, `labels` (array)
+INPUT CONTEXT will include: `ticketKey`, `labelsToAdd` (array)
+
+Construct one `--add <label>` argument per entry in `labelsToAdd`:
 
 ```
-Tool: mcp__atlassian__editJiraIssue
-issueKey: <ticketKey>
-cloudId: "<config:cloudId>"
-fields: {"labels": <labels array from INPUT CONTEXT — write exactly as provided>}
+Tool: Bash
+command: bash .claude/skills/feature-workflow/scripts/jira-add-labels.sh \
+  --ticket <ticketKey from INPUT CONTEXT> \
+  --add <label1> --add <label2> ...
 ```
 
-Do NOT add, remove, reorder, or deduplicate labels. The orchestrator owns
-the merge logic.
+The script reads `jira.urlBase` from `.claude/skills/feature-workflow/config.json`
+at runtime and authenticates via `JIRA_EMAIL` and `JIRA_API_TOKEN` env vars.
+Do NOT call `mcp__atlassian__editJiraIssue` with a `labels` field under
+this action.
 
-### Output
+### Output (success)
+
+Parse the script's stdout JSON and surface these fields:
 
 ```json
 {
-  "action": "applyLabels",
+  "action": "addLabels",
   "ticketKey": "<TICKET_KEY>",
-  "applied": true
+  "applied": true,
+  "preLabels": ["<existing label>", "..."],
+  "added": ["<label1>", "..."],
+  "postLabels": ["<existing label>", "<label1>", "..."]
+}
+```
+
+### Output (failure)
+
+If the script exits non-zero, return:
+
+```json
+{
+  "action": "addLabels",
+  "ticketKey": "<TICKET_KEY>",
+  "applied": false,
+  "error": "<one-line summary from script stderr>",
+  "scriptStderr": "<full stderr output>"
 }
 ```
 

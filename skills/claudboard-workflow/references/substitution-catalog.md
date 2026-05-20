@@ -374,18 +374,17 @@ key is the directory name of a service repo under the workspace root.
 
 **Resolution logic:**
 
-For each repo in the workspace, extract the Azure DevOps `repositoryId` by
-parsing the git remote URL:
+For each repo in the workspace, parse the git remote URL:
 
 ```bash
 git -C "<workspace>/<repo>" remote get-url origin 2>/dev/null
 ```
 
-Parse the URL to extract the repo UUID or name. If the remote is an ADO URL
-of the form `.../git/RepoName`, use the UUID from the ADO API if reachable,
-otherwise stub `[TODO: repositoryId]`.
+**When `REPO_ADO` is active:** Extract the Azure DevOps `repositoryId` from an
+ADO URL of the form `.../git/RepoName`. Use the UUID from the ADO API if
+reachable, otherwise stub `[TODO: repositoryId]`.
 
-Render as a JSON object:
+Render as a JSON object with `azureDevOps.repositoryId`:
 
 ```json
 {
@@ -395,30 +394,148 @@ Render as a JSON object:
 }
 ```
 
-**Fallback when unresolvable:** Each repo that cannot be resolved gets
-`"repositoryId": "[TODO: repositoryId]"` — the user fills these in manually
-after generation.
+**When `REPO_GITHUB` is active:** Extract `owner` and `repo` from a GitHub URL
+of the form `github.com:{owner}/{repo}` (SSH) or `https://github.com/{owner}/{repo}`
+(HTTPS). Stub `[TODO: owner]` / `[TODO: repo]` when not parseable.
 
-**Example resolved value (MEAS workspace):**
+Render as a JSON object with `github.owner` and `github.repo`:
 
 ```json
 {
-  "meas.cloud.common-dto":        { "azureDevOps": { "repositoryId": "[TODO: repositoryId]" } },
-  "meas.cloud.datahandler":       { "azureDevOps": { "repositoryId": "[TODO: repositoryId]" } },
-  "meas.cloud.controller":        { "azureDevOps": { "repositoryId": "[TODO: repositoryId]" } },
-  "meas.cloud.exportprovider":    { "azureDevOps": { "repositoryId": "[TODO: repositoryId]" } },
-  "meas.cloud.profile-mapper":    { "azureDevOps": { "repositoryId": "[TODO: repositoryId]" } },
-  "meas.cloud.subscription":      { "azureDevOps": { "repositoryId": "[TODO: repositoryId]" } },
-  "meas.cloud.user-account":      { "azureDevOps": { "repositoryId": "[TODO: repositoryId]" } },
-  "meas.cloud.web-ui":            { "azureDevOps": { "repositoryId": "[TODO: repositoryId]" } }
+  "service-a":  { "github": { "owner": "my-org", "repo": "service-a" } },
+  "service-b":  { "github": { "owner": "my-org", "repo": "service-b" } }
 }
 ```
+
+**Fallback when unresolvable:** Each repo that cannot be resolved gets
+`"repositoryId": "[TODO: repositoryId]"` (ADO) or `"owner": "[TODO: owner]"`
+(GitHub) — the user fills these in manually after generation.
 
 **Used in:** `config.json.template` inside the `<!-- IF WORKSPACE_MODE -->` block
 as the value of the top-level `repos` key.
 
 **Mode constraint:** `WORKSPACE_MODE` only. Guarded by an IF block; never
 appears in non-workspace generated configs.
+
+---
+
+---
+
+## {{TR_BASE_URL}}
+
+**Token:** `{{TR_BASE_URL}}`
+
+**Source field in analysis report:** Not auto-detected — must be provided by
+the user during Phase 2c config gathering.
+
+**Fallback when unresolvable:** `[TODO: TR_BASE_URL]`.
+
+**Example resolved value:** `https://track.example.bosch.com`
+
+**Used in:** `config.json.template` inside the `<!-- IF TRACKER_TR -->` block
+as the value of `tr.baseUrl`.
+
+**Mode constraint:** `TRACKER_TR` only. Guarded by an IF block; irrelevant when
+TRACKER_TR=false.
+
+---
+
+## {{TR_PROJECT_KEY}}
+
+**Token:** `{{TR_PROJECT_KEY}}`
+
+**Source field in analysis report:** Not auto-detected — must be provided by
+the user during Phase 2c config gathering.
+
+**Fallback when unresolvable:** `[TODO: TR_PROJECT_KEY]`.
+
+**Example resolved value:** `MEAS`
+
+**Used in:** `config.json.template` inside the `<!-- IF TRACKER_TR -->` block
+as the value of `tr.projectKey`. Also used as the ticket prefix for branch and
+commit message patterns.
+
+**Mode constraint:** `TRACKER_TR` only. Guarded by an IF block; irrelevant when
+TRACKER_TR=false.
+
+---
+
+## {{GITHUB_OWNER}}
+
+**Token:** `{{GITHUB_OWNER}}`
+
+**Source field in analysis report:** Auto-extracted from the git remote URL by
+parsing `github.com:{owner}/{repo}` (SSH) or
+`https://github.com/{owner}/{repo}` (HTTPS) patterns. Prompted in Phase 2c
+when not auto-detected.
+
+**Fallback when unresolvable:** `[TODO: GITHUB_OWNER]`.
+
+**Example resolved value:** `my-org`
+
+**Used in:** `config.json.template` inside the `<!-- IF REPO_GITHUB -->` block
+as the value of `github.owner`.
+
+**Mode constraint:** `REPO_GITHUB` only. Guarded by an IF block; irrelevant when
+REPO_GITHUB=false.
+
+---
+
+## {{GITHUB_REPO}}
+
+**Token:** `{{GITHUB_REPO}}`
+
+**Source field in analysis report:** Auto-extracted from the git remote URL
+alongside `GITHUB_OWNER`. Prompted in Phase 2c when not auto-detected.
+
+**Fallback when unresolvable:** `[TODO: GITHUB_REPO]`.
+
+**Example resolved value:** `my-service`
+
+**Used in:** `config.json.template` inside the `<!-- IF REPO_GITHUB -->` block
+as the value of `github.repo`.
+
+**Mode constraint:** `REPO_GITHUB` only. Guarded by an IF block; irrelevant when
+REPO_GITHUB=false.
+
+---
+
+## {{GITHUB_LINKING_KEYWORD}}
+
+**Token:** `{{GITHUB_LINKING_KEYWORD}}`
+
+**Source field in analysis report:** Not auto-detected — prompted in Phase 2c
+with a default of `"Closes"`. The user may override to `"Fixes"` or `"Resolves"`
+depending on their GitHub workflow conventions.
+
+**Fallback when unresolvable:** `Closes` (the default is always valid).
+
+**Example resolved value:** `Closes`
+
+**Used in:** `config.json.template` inside the `<!-- IF REPO_GITHUB -->` block
+as the value of `github.linkingKeyword`. Used by pr-agent-github.md to
+append `<linkingKeyword> #<N>` to the PR description body.
+
+**Mode constraint:** `REPO_GITHUB` only. Guarded by an IF block; irrelevant when
+REPO_GITHUB=false.
+
+---
+
+## {{CIRCUIT_BREAKER_LIBRARY}}
+
+**Token:** `{{CIRCUIT_BREAKER_LIBRARY}}`
+
+**Source field in analysis report:** `architectural_patterns` subsection → entry with `type: circuit-breaker` → `library` field.
+
+**Resolution logic:** Read the `library` field from the first `circuit-breaker` entry in `architectural_patterns`. Expected values: `resilience4j`, `hystrix`, `opossum`.
+
+**Fallback when unresolvable:** Empty string (the `CIRCUIT_BREAKER` flag controls whether this block is rendered — if the flag is false, the block is absent and this variable never fires).
+
+**Example resolved value:** `resilience4j`
+
+**Used in:** `agents/implementation-agent.md.template` inside `<!-- IF CIRCUIT_BREAKER -->` block (e.g., "wrap new outbound calls with the detected library (resilience4j)").
+
+**Mode constraint:** `CIRCUIT_BREAKER` only. Guarded by an IF block; irrelevant when CIRCUIT_BREAKER=false.
 
 ---
 
@@ -434,14 +551,20 @@ appears in non-workspace generated configs.
 | `{{BUILD_CMD}}` | All modes | Yes |
 | `{{TEST_CMD}}` | All modes | Yes |
 | `{{LINT_CMD}}` | All modes | No (empty string ok) |
-| `{{TICKET_PREFIX}}` | JIRA_AVAILABLE | No (falls back to TODO) |
+| `{{TICKET_PREFIX}}` | TRACKER_JIRA or TRACKER_TR active | No (falls back to TODO) |
 | `{{WORKSPACE_NAME}}` | WORKSPACE_MODE only | No (guarded by IF block) |
 | `{{REPO_COUNT}}` | WORKSPACE_MODE only | No (guarded by IF block) |
 | `{{REPO_LIST_BULLETS}}` | WORKSPACE_MODE only | No (guarded by IF block) |
-| `{{REPOS_MAP_JSON}}` | WORKSPACE_MODE only | No (guarded by IF block) |
+| `{{REPOS_MAP_JSON}}` | WORKSPACE_MODE only | No (guarded by IF block; shape depends on REPO_ADO vs REPO_GITHUB) |
 | `{{EDGE_TYPES_JOINED}}` | CROSS_SERVICE_EDGES only | No (guarded by IF block) |
 | `{{SHARED_LIB_NAME}}` | SHARED_LIB only | No (guarded by IF block) |
 | `{{SHARED_LIB_CONSUMER_COUNT}}` | SHARED_LIB only | No (guarded by IF block) |
 | `{{ECOSYSTEM_MEMORY_NAME}}` | MEMORIES_PRESENT only | No (guarded by IF block) |
 | `{{REPO_OR_SERVICE_LABEL}}` | All modes | Yes |
 | `{{STACK_REMINDERS}}` | All modes | No (empty string ok) |
+| `{{TR_BASE_URL}}` | TRACKER_TR only | No (guarded by IF block) |
+| `{{TR_PROJECT_KEY}}` | TRACKER_TR only | No (guarded by IF block) |
+| `{{GITHUB_OWNER}}` | REPO_GITHUB only | No (guarded by IF block) |
+| `{{GITHUB_REPO}}` | REPO_GITHUB only | No (guarded by IF block) |
+| `{{GITHUB_LINKING_KEYWORD}}` | REPO_GITHUB only | No (default: "Closes") |
+| `{{CIRCUIT_BREAKER_LIBRARY}}` | CIRCUIT_BREAKER only | No (guarded by IF block) |

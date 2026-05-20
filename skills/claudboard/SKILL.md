@@ -63,6 +63,12 @@ Sub-skills load these shared references as needed:
 | File | Used by | Purpose |
 |------|---------|---------|
 | `references/stack-detectors.md` | analyse, techdebt, refresh | Shared detection heuristics, infra signals, monorepo detection |
+| `references/workflow-signals.md` | analyse | Dispatcher for cross-service edge schema + sub-catalog pointer table |
+| `references/edges/sync-rpc.md` | analyse | REST, gRPC, tRPC detection (Java + TS) |
+| `references/edges/messaging.md` | analyse | Kafka, AMQP, JMS, SNS/SQS, Solace, Azure Service Bus detection |
+| `references/edges/streaming.md` | analyse | WebSocket, SSE, RSocket detection |
+| `references/edges/graphql.md` | analyse | GraphQL client + server detection |
+| `references/patterns/architectural.md` | analyse | Saga, CQRS, outbox, BFF, circuit breaker, schema registry detection |
 | `references/stack-detectors-java.md` | analyse, techdebt | Java/Kotlin Wide Scan patterns (7 categories) |
 | `references/stack-detectors-typescript.md` | analyse, techdebt | TypeScript/JavaScript Wide Scan patterns (7 categories) |
 | `references/stack-detectors-python.md` | analyse, techdebt | Python Wide Scan patterns (7 categories) |

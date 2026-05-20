@@ -1,5 +1,11 @@
 {
-<!-- IF JIRA_AVAILABLE -->
+// Tracker backend: "jira" or "tr" (from config.tracker discriminator)
+// Repo backend: "ado" or "github" (from config.repo discriminator)
+// Credential handling: JIRA_EMAIL/JIRA_API_TOKEN env vars for jira-add-labels.sh (TRACKER_JIRA);
+//   bosch-jira-mcp reads bearer token from ~/.config/bosch-jira-mcp/config.json (TRACKER_TR).
+// See tracker-config-prompts.md and repo-config-prompts.md for setup details.
+<!-- IF TRACKER_JIRA -->
+  "tracker": "jira",
   "jira": {
     "cloudId": "{{JIRA_CLOUD_ID}}",
     "projectKey": "{{TICKET_PREFIX}}",
@@ -22,19 +28,43 @@
         "frontend": "{{JIRA_LABELS_AREA_FRONTEND}}",
         "devops":   "{{JIRA_LABELS_AREA_DEVOPS}}",
         "docs":     "{{JIRA_LABELS_AREA_DOCS}}"
-      },
+      }
 <!-- ELSE -->
-      "area": null,
+      "area": null
 <!-- ENDIF -->
-      "preserveExisting": true
     }
   },
 <!-- ENDIF -->
-<!-- IF ADO_AVAILABLE -->
+<!-- IF TRACKER_TR -->
+  "tracker": "tr",
+  "tr": {
+    "baseUrl": "{{TR_BASE_URL}}",
+    "projectKey": "{{TR_PROJECT_KEY}}",
+    "transitions": {
+      "start":   "{{TR_TRANSITION_START}}",
+      "success": "{{TR_TRANSITION_SUCCESS}}",
+      "failure": "{{TR_TRANSITION_FAILURE}}",
+      "pause":   null // RESERVED — no v1 command fires this transition
+    }
+    // Note: no customFields — T&R MCP cannot write custom fields.
+    // Note: no cloudId — T&R uses bearer-token auth via bosch-jira-mcp config file.
+    // Note: no labels.ai — labels are applied via read-modify-write in tr-agent.addLabels.
+  },
+<!-- ENDIF -->
+<!-- IF REPO_ADO -->
+  "repo": "ado",
   "azureDevOps": {
     "organization": "{{ADO_ORGANIZATION}}",
     "project": "{{ADO_PROJECT}}",
     "repositoryId": "{{ADO_REPOSITORY_ID}}"
+  },
+<!-- ENDIF -->
+<!-- IF REPO_GITHUB -->
+  "repo": "github",
+  "github": {
+    "owner": "{{GITHUB_OWNER}}",
+    "repo": "{{GITHUB_REPO}}",
+    "linkingKeyword": "{{GITHUB_LINKING_KEYWORD}}"
   },
 <!-- ENDIF -->
   "git": {

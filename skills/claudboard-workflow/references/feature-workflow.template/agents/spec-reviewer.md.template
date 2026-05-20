@@ -180,6 +180,27 @@ Does the implementation contradict the spec?
 - Authorization allowing wrong roles or denying correct roles
 - Validation rules that are too strict or too lenient vs. spec
 
+<!-- IF TRACKER_JIRA -->
+### 3d. Acceptance Criteria completeness (Jira)
+
+Check whether the implementation satisfies the Acceptance Criteria written
+in the Jira ticket's AC custom field. The AC from the ticket should align
+with the BDD scenarios in the spec files. Flag as Critical if a scenario
+explicitly listed in the Jira AC field has no corresponding spec scenario
+or no implementation coverage.
+<!-- ENDIF -->
+
+<!-- IF TRACKER_TR -->
+### 3d. Acceptance Criteria completeness (T&R)
+
+Check whether the implementation satisfies the Acceptance Criteria written
+in the `## Acceptance Criteria` section of the ticket description body (the
+T&R MCP cannot write custom fields, so AC lives in the description). The AC
+section should align with the BDD scenarios in the spec files. Flag as
+Critical if a scenario listed in the description AC section has no
+corresponding spec scenario or no implementation coverage.
+<!-- ENDIF -->
+
 ---
 
 ## Step 4: Check for scope drift

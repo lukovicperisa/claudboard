@@ -390,168 +390,20 @@ When matching outbound references to repo identities:
 
 ## Cross-Service Surface Detection
 
-**Applies to: workspace mode (multi-repo) only.** Runs during per-repo analysis (Phase 1b) to extract each repo's communication surface.
+**Applies to: workspace mode (multi-repo) only.** Runs during per-repo analysis (Phase 1b) to extract each repo's communication surface for the cross-service dependency graph (Phase 1c).
 
-These patterns are used to build the cross-service dependency graph (Phase 1c).
+**Single source of truth:** `workflow-signals.md` and `edges/*.md`
 
-### Outbound REST Surface
+All transport-specific grep commands and extraction rules are in the sub-catalogs:
 
-**What this repo calls:**
+| Transport family | Reference file |
+|-----------------|----------------|
+| REST clients, gRPC, tRPC, inbound routes | `edges/sync-rpc.md` |
+| Kafka, RabbitMQ, JMS, Solace, MQTT, Redis pub/sub, SNS/SQS, Service Bus, Google Pub/Sub | `edges/messaging.md` |
+| WebSocket, SSE, RSocket, socket.io | `edges/streaming.md` |
+| Spring GraphQL, DGS, Apollo, urql, graphql-request, Relay | `edges/graphql.md` |
 
-| Stack | Pattern | Grep Command | What to Extract |
-|-------|---------|--------------|-----------------|
-| Java/Spring | `@FeignClient` | `grep -rn '@FeignClient' --include='*.java' src/` | `name = "..."` or `url = "..."` value |
-| Java/Spring | `RestTemplate` | `grep -rn 'RestTemplate' --include='*.java' src/` | URL patterns in `.getForObject()`, `.postForEntity()` etc. |
-| Java/Spring | `WebClient` | `grep -rn 'WebClient' --include='*.java' src/` | `.baseUrl("...")` values |
-| TypeScript | Axios | `grep -rn 'axios\.' --include='*.ts' src/` | URL patterns containing service names |
-| TypeScript | fetch | `grep -rn 'fetch(' --include='*.ts' src/` | URL patterns containing service names |
-
-**Extraction example (FeignClient):**
-```java
-@FeignClient(name = "user-service")
-public interface UserServiceClient { ... }
-```
-→ Record: `outbound_rest: "user-service"`
-
-**Extraction example (RestTemplate URL):**
-```java
-restTemplate.getForObject("http://order-service/api/orders", ...)
-```
-→ Record: `outbound_rest: "order-service"`
-
-### Inbound REST Surface
-
-**What this repo exposes:**
-
-| Stack | Pattern | Grep Command | What to Extract |
-|-------|---------|--------------|-----------------|
-| Java/Spring | `@RestController` | `grep -rn '@RestController' --include='*.java' src/` | Endpoint paths from `@RequestMapping`, `@GetMapping`, etc. |
-| Java/Spring | Service identity | See "Service Identity Resolution" above | The canonical name of this service |
-
-**Extraction example:**
-```java
-@RestController
-@RequestMapping("/api/users")
-public class UserController { ... }
-```
-→ Record: `inbound_rest: ["/api/users"]` + service identity: `"user-service"`
-
-### Outbound Kafka Surface
-
-**Topics this repo publishes to:**
-
-| Pattern | Grep Command | What to Extract |
-|---------|--------------|-----------------|
-| `KafkaTemplate.send` | `grep -rn 'KafkaTemplate.*\.send(' --include='*.java' src/` | Topic name literal (first argument) |
-| `@SendTo` | `grep -rn '@SendTo' --include='*.java' src/` | Annotation value |
-
-**Extraction example:**
-```java
-kafkaTemplate.send("order.created", message);
-```
-→ Record: `outbound_kafka: ["order.created"]`
-
-### Inbound Kafka Surface
-
-**Topics this repo consumes:**
-
-| Pattern | Grep Command | What to Extract |
-|---------|--------------|-----------------|
-| `@KafkaListener` | `grep -rn '@KafkaListener' --include='*.java' src/` | `topics = {"..."}` value |
-
-**Extraction example:**
-```java
-@KafkaListener(topics = "order.created")
-public void handleOrderCreated(...) { ... }
-```
-→ Record: `inbound_kafka: ["order.created"]`
-
-### Outbound Solace Spring Cloud Stream Surface
-
-**Topics this repo publishes to (config-based):**
-
-| File | Pattern | What to Extract |
-|------|---------|-----------------|
-| `application.yml` | `spring.cloud.stream.bindings.{channel}.destination` | Destination value for each `@Output` channel |
-| Java code | `@Output("channelName")` or `StreamBridge` | Link config destination to producer channel |
-
-**Extraction example (application.yml):**
-```yaml
-spring:
-  cloud:
-    stream:
-      bindings:
-        orderOut:
-          destination: order/created
-```
-→ Record: `outbound_solace_scs: ["order/created"]`
-
-### Inbound Solace Spring Cloud Stream Surface
-
-**Topics this repo consumes (annotation-based):**
-
-| Pattern | Grep Command | What to Extract |
-|---------|--------------|-----------------|
-| `@StreamListener` | `grep -rn '@StreamListener' --include='*.java' src/` | Binding destination from config (linked via channel name) |
-
-**Extraction example:**
-```java
-@StreamListener("orderIn")
-public void handleOrder(...) { ... }
-```
-→ Look up `spring.cloud.stream.bindings.orderIn.destination` in config → Record: `inbound_solace_scs: ["order/created"]`
-
-### Outbound Solace JCSMP Surface
-
-**Topics this repo publishes to (code literals):**
-
-| Pattern | Grep Command | What to Extract |
-|---------|--------------|-----------------|
-| `Topic.of("...")` | `grep -rn 'Topic\.of(' --include='*.java' src/` | Literal topic name |
-| `Queue.get("...")` | `grep -rn 'Queue\.get(' --include='*.java' src/` | Literal queue name |
-
-**When topic is a constant:**
-```java
-private static final String TOPIC = "order/created";
-...
-producer.send(Topic.of(TOPIC), message);
-```
-→ Grep for the constant definition:
-```bash
-grep -rn 'static final String TOPIC' --include='*.java' src/
-```
-→ Resolve the literal value from the constant declaration
-
-**Note unresolved constants:** If a topic reference uses a constant that cannot be resolved, record: `outbound_solace_jcsmp: ["<unresolved: TOPIC_NAME>"]`
-
-### Inbound Solace JCSMP Surface
-
-**Topics this repo subscribes to:**
-
-| Pattern | Grep Command | What to Extract |
-|---------|--------------|-----------------|
-| `XMLMessageConsumer.addSubscription(Topic.of("..."))` | `grep -rn 'addSubscription' --include='*.java' src/` | Topic literal from `Topic.of(...)` |
-
-**Extraction example:**
-```java
-consumer.addSubscription(Topic.of("order/created"));
-```
-→ Record: `inbound_solace_jcsmp: ["order/created"]`
-
-### Surface Extraction Summary
-
-For each repo in workspace mode, record:
-- **Service identity:** resolved name (see Service Identity Resolution)
-- **Outbound REST:** list of target service names or URLs
-- **Inbound REST:** list of exposed endpoint paths
-- **Outbound Kafka:** list of published topic names
-- **Inbound Kafka:** list of consumed topic names
-- **Outbound Solace SCS:** list of published destinations (from config)
-- **Inbound Solace SCS:** list of consumed destinations (from config)
-- **Outbound Solace JCSMP:** list of published topics/queues (from code literals, note unresolved constants)
-- **Inbound Solace JCSMP:** list of subscribed topics (from code literals)
-
-This surface data is used in Phase 1c (graph construction) to match dependencies across repos.
+See `workflow-signals.md` for the full output schema, field definitions, and the `type` ↔ `protocol` backward-compat synonym rule.
 
 ---
 

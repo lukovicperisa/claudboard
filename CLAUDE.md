@@ -16,6 +16,14 @@ skills/
 │       ├── stack-detectors.md        # Detection heuristics per language/framework
 │       ├── pattern-catalog.md        # Architecture patterns + anti-patterns catalog
 │       ├── quality-signals.md        # Quality scoring + adaptive rule depth guide
+│       ├── workflow-signals.md       # Dispatcher + schema for cross-service edge & pattern detection
+│       ├── edges/                    # Per-family transport detection sub-catalogs
+│       │   ├── sync-rpc.md           # REST, gRPC, tRPC, GraphQL-over-HTTP clients & servers
+│       │   ├── messaging.md          # Kafka, AMQP, JMS, SNS/SQS, Solace, Azure Service Bus, etc.
+│       │   ├── streaming.md          # WebSocket, SSE, RSocket
+│       │   └── graphql.md            # GraphQL (schema-first and code-first, clients and servers)
+│       ├── patterns/
+│       │   └── architectural.md      # Saga, CQRS, outbox, BFF, circuit breaker, schema registry, etc.
 │       ├── claude-md-template.md     # CLAUDE.md generation template
 │       ├── rule-templates.md         # Rule file templates per language
 │       └── skill-generation.md       # Full-scope skill generation guide
@@ -29,9 +37,16 @@ skills/
     ├── SKILL.md                      # Orchestrator — generates feature-workflow/ into target project
     └── references/
         ├── feature-workflow.template/ # Template tree (SKILL.md, agents, scripts, config)
-        ├── block-catalog.md          # v1 capability flags: name, condition, blocks that reference it
+        │   └── agents/
+        │       ├── jira-agent.md           # Verbatim — written only when TRACKER_JIRA=true
+        │       ├── tr-agent.md             # Verbatim — written only when TRACKER_TR=true
+        │       ├── pr-agent-ado.md         # Verbatim — written only when REPO_ADO=true
+        │       ├── pr-agent-github.md      # Verbatim — written only when REPO_GITHUB=true
+        │       └── *.md.template           # Templated agents (architect, git, impl, spec-reviewer, etc.)
+        ├── block-catalog.md          # v1 capability flags: 4 MCP backends + all other flags
         ├── substitution-catalog.md   # v1 {{VAR}} tokens: source, fallback, example
-        └── jira-config-prompts.md    # User-facing prompt text for config.json fields
+        ├── tracker-config-prompts.md # Prompt text for Jira (TRACKER_JIRA) and T&R (TRACKER_TR) fields
+        └── repo-config-prompts.md    # Prompt text for ADO (REPO_ADO) and GitHub (REPO_GITHUB) fields
 ```
 
 ## Development Workflow

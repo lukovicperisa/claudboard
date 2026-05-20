@@ -96,6 +96,22 @@ file types. As a general guide:
 - CI/CD pipeline rules — if touching pipeline files, Dockerfiles, or Helm charts.
 <!-- ENDIF -->
 
+<!-- IF TRACKER_JIRA -->
+**Ticket cross-reference:** This workflow is linked to a Jira ticket. The
+orchestrator will prefix commit messages with the ticket key. Do not add
+the ticket key to commit messages yourself — the git-agent and orchestrator
+handle this. If you write inline code comments that reference the ticket,
+use the full key format (e.g., `// PLAT-12345: ...`).
+<!-- ENDIF -->
+
+<!-- IF TRACKER_TR -->
+**Ticket cross-reference:** This workflow is linked to a Bosch Track & Release
+ticket. The orchestrator will prefix commit messages with the ticket key. Do
+not add the ticket key to commit messages yourself — the git-agent and
+orchestrator handle this. If you write inline code comments that reference the
+ticket, use the full key format (e.g., `// MEAS-12345: ...`).
+<!-- ENDIF -->
+
 **{{STACK_NAME}} baseline** (true unless this project's CLAUDE.md says otherwise):
 
 - Build command: `{{BUILD_CMD}}`
@@ -281,6 +297,29 @@ skill exists for the operation, follow its recipe.
   invent new shapes
 - Idempotency: follow project conventions; resilience4j is NOT available unless
   already present — do not add it
+<!-- ENDIF -->
+
+<!-- IF OUTBOX -->
+**Outbox pattern:**
+- When writing to the database AND sending a message in the same operation, use the
+  transactional outbox pattern: write the domain entity AND the outbox record in a
+  single `@Transactional` scope — do NOT call the broker directly from inside the
+  transaction
+- The outbox relay (polling or CDC via Debezium) handles broker delivery after commit;
+  this relay is usually already configured — do not add a new one unless the plan
+  explicitly calls for it
+- If you are adding a new message type, add the corresponding outbox table column or
+  event-type discriminator following the existing outbox schema
+<!-- ENDIF -->
+
+<!-- IF CIRCUIT_BREAKER -->
+**Circuit Breaker:**
+- Any new outbound HTTP, gRPC, or GraphQL call must be wrapped with the detected
+  circuit breaker library ({{CIRCUIT_BREAKER_LIBRARY}})
+- Follow the existing circuit breaker configuration — do not introduce new threshold
+  values; reuse the annotated pattern already in the codebase
+- If no existing pattern applies, add the annotation/wrapper and note it in the result
+  for architect review
 <!-- ENDIF -->
 
 ### Step 4: Build

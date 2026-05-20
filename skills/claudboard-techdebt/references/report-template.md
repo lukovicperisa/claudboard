@@ -121,6 +121,29 @@ high: {N}
 ---
 
 {Repeat for each item in this module}
+
+## Architectural Pattern Gaps
+
+{Only include this section if Pass 4b detected one or more gaps. Omit entirely if no gaps found.}
+
+### [TD-{NNN}] {Gap title — from arch-pattern-gaps.md template}
+
+**Severity:** {MEDIUM | HIGH}
+**Effort:** {M | L}
+**Category:** Architectural Pattern Gap
+
+**Issue:** {From the gap template — describe the missing pattern and the risk it creates}
+
+**Evidence:** {file:line references from the analysis report's cross_service_edges or grep confirmation output}
+
+**Fix:**
+{Numbered fix steps from arch-pattern-gaps.md}
+
+**References:** {From arch-pattern-gaps.md}
+
+**Depends on:** —
+
+---
 ```
 
 ---

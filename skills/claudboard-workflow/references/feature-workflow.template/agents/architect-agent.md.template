@@ -276,6 +276,119 @@ Define application-layer commands or equivalent input objects:
 ```
 <!-- ENDIF -->
 
+<!-- IF RABBITMQ -->
+#### RabbitMQ contract
+
+```markdown
+**Exchange:** <exchange name and type: direct/topic/fanout/headers>
+**Routing key:** <routing key pattern — follow existing conventions>
+**Queue:** <queue name>
+**Direction:** INBOUND consumer / OUTBOUND producer
+**DLQ:** <dead-letter queue name or "not configured">
+**Idempotency:** <message ID check or idempotent handler pattern>
+**Binding:** <exchange → queue binding already configured or to be created>
+```
+
+Design considerations:
+- Exchange/queue/routing-key design: follow existing naming conventions in this repo
+- DLQ strategy: does the project already have a DLQ pattern? If not, recommend adding one for reliability
+- Idempotency: consumer must handle re-delivery gracefully — check for existing MessageId dedup patterns
+<!-- ENDIF -->
+
+<!-- IF JMS -->
+#### JMS contract
+
+```markdown
+**Destination type:** Queue / Topic
+**Destination name:** <name — follow existing naming conventions>
+**Direction:** INBOUND listener / OUTBOUND sender
+**Durability:** <durable subscription or non-durable>
+**Message selector:** <JMS selector expression if filtering, or "none">
+```
+
+Design considerations:
+- Destination naming: queue for point-to-point, topic for pub-sub; check existing destinations in `application.yml`
+- Durable subscriptions for topic consumers that cannot miss messages
+- Message selectors: prefer them over filtering in the listener body when filtering on standard JMS headers
+<!-- ENDIF -->
+
+<!-- IF GRAPHQL -->
+#### GraphQL contract
+
+```markdown
+**Approach:** Schema-first (SDL defined first) / Code-first (annotations generate schema)
+**Operation type:** Query / Mutation / Subscription
+**Operation name:** <operation name>
+**Input type:** <input type name and fields>
+**Return type:** <return type name>
+**N+1 risk:** <list fields that resolve sub-entities — DataLoader required>
+**Versioning:** <deprecation plan or "no breaking changes">
+```
+
+Design considerations:
+- Schema-first vs code-first: check existing choice in this repo (`*.graphqls` files → schema-first; annotations only → code-first)
+- N+1 problem: any field resolver that loads a collection of sub-entities needs a DataLoader (batch loader) — list them explicitly in the contract
+- Versioning: GraphQL favors deprecating fields over schema versioning; document which fields this change deprecates
+<!-- ENDIF -->
+
+<!-- IF WEBSOCKET -->
+#### WebSocket / Streaming contract
+
+```markdown
+**Protocol:** WebSocket / STOMP / socket.io / SSE / RSocket
+**Endpoint / path:** <endpoint URL or route>
+**Direction:** Server sends / Client sends / Bidirectional
+**Message format:** <JSON payload shape or event name>
+**Auth on upgrade:** <how the WebSocket handshake is authenticated>
+**Reconnect strategy:** <exponential backoff / ping-pong / client responsibility>
+**Backpressure:** <flow control approach or "not addressed">
+```
+
+Design considerations:
+- Connection lifecycle: who manages reconnect? Document clearly. Clients should implement exponential backoff.
+- Backpressure: WebSocket has no built-in flow control; if the server can produce faster than the client consumes, define a buffering or drop strategy
+- Auth on upgrade: the HTTP upgrade request must carry auth (JWT header or cookie); document the mechanism
+- For SSE: one-way from server to client — simpler than WebSocket, prefer it when client doesn't send messages
+<!-- ENDIF -->
+
+<!-- IF SAGA -->
+#### Saga contract
+
+```markdown
+**Saga type:** Orchestration / Choreography
+**Saga name:** <name>
+**Steps:** <ordered list of compensation-able operations>
+**Compensating transactions:** <rollback action per step>
+**Idempotency key:** <field or header used to ensure exactly-once processing>
+**Failure propagation:** <how step failure triggers compensation chain>
+```
+
+Design considerations:
+- Compensation: every step that changes state must have a compensating transaction — document it before implementation
+- Idempotency keys: each step consumer must be idempotent; use a unique saga ID + step ID as the idempotency key
+- Orchestration vs choreography: orchestrator pattern makes the flow explicit but introduces a single point of coordination; choreography is more decoupled but harder to reason about globally — document the rationale for the chosen style
+- For choreography: paired Completed/Failed events must be consumed by all interested parties; document the event contract
+<!-- ENDIF -->
+
+<!-- IF CQRS -->
+#### CQRS contract
+
+```markdown
+**Command:** <CommandName>Command — fields, validation rules
+**Command handler:** <HandlerClass> — side effects, events emitted
+**Query:** <QueryName>Query or <QueryName>QuerySpec — filter fields
+**Query handler / projection:** <HandlerClass or ProjectionClass> — data source (read model or write model)
+**Read model:** <entity / view class> — if separate from write model
+**Projection update trigger:** <event or polling mechanism>
+```
+
+Design considerations:
+- Read/write model separation: query handlers must NOT use the command-side repository; use a separate read model or projection
+- Projection updates: document how the read model stays in sync — event-sourced projection, DB view, or denormalized read table
+- Command validation: validate before the handler executes, not inside; keep handlers side-effect focused
+- Eventual consistency: if read model lags, document the acceptable lag window and whether the API needs to handle stale reads
+<!-- ENDIF -->
+
 ### Frontend contracts
 
 For each new operation:
@@ -442,6 +555,34 @@ Write the plan to `<specDir>/execution-plan.md`:
 <!-- IF SHARED_LIB -->
 ### Shared library
 <artifact, version, affected consumer repos>
+<!-- ENDIF -->
+
+<!-- IF TRACKER_JIRA -->
+### Acceptance Criteria placement (Tracker: Jira)
+Write acceptance criteria to the Jira custom field (configured as
+`jira.customFields.acceptanceCriteria` in config.json). Do NOT inline AC
+in the ticket description body — keep description as Goal + Context only.
+<!-- ENDIF -->
+
+<!-- IF TRACKER_TR -->
+### Acceptance Criteria placement (Tracker: T&R)
+The T&R MCP cannot write custom fields. Write acceptance criteria directly
+in the ticket description body under a `## Acceptance Criteria` heading:
+
+```markdown
+## Goal
+<observable outcome>
+
+## Acceptance Criteria
+- <criterion 1>
+- <criterion 2>
+
+## Context
+<background, constraints>
+```
+
+Do NOT reference a custom field for AC — T&R does not support custom field
+writes in bosch-jira-mcp v1.
 <!-- ENDIF -->
 
 ## Checkpoints

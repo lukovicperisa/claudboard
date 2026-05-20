@@ -1,104 +1,88 @@
 # Workflow Signals Detection
 
-Used by `claudboard-analyse` to populate the "### Workflow Signals" subsection of the analysis report. Consumed by `claudboard-workflow` for capability-flag resolution. Backward-compatible additive — a missing subsection defaults all signals to unknown/empty.
+Used by `claudboard-analyse` to populate the "### Workflow Signals" and "### Architectural Patterns" subsections of the analysis report. Consumed by `claudboard-workflow` for capability-flag resolution and by `claudboard-techdebt` for pattern-gap findings. Backward-compatible additive — a missing subsection defaults all signals to unknown/empty.
 
 ---
 
 ## Output Schema
 
+### Cross-Service Edges
+
 ```yaml
 workflow_signals:
   cross_service_edges:
-    - {type: feign, target: "<service-name>"}
-    - {type: http, target: "<url-or-unknown>"}
-    - {type: kafka, target: "<topic-name>"}
-    - {type: grpc, target: "<service-name-or-unknown>"}
+    - {family: sync-rpc, protocol: feign, type: feign, direction: outbound, target: "<service-name>", schema_ref: null}
+    - {family: sync-rpc, protocol: http,  type: http,  direction: outbound, target: "<url-or-unknown>", schema_ref: null}
+    - {family: messaging, protocol: kafka, type: kafka, direction: outbound, target: "<topic-name>", schema_ref: null}
+    - {family: sync-rpc, protocol: grpc,  type: grpc,  direction: inbound,  target: "<service-name-or-unknown>", schema_ref: "path/to/file.proto"}
+    - {family: graphql,  protocol: graphql, type: graphql, direction: inbound, target: "getOrder", schema_ref: "src/schema.graphqls"}
   shared_libraries:
     - {name: "<artifactId-or-package>", consumer_count: <N>}
   auth_perimeter: "gateway|in-service-jwt|none|unknown"
   ticket_prefix: "PROJ|null"
 ```
 
-Rules:
-- `cross_service_edges`: list of detected outbound communication edges; empty list `[]` if none
-- `shared_libraries`: list of libraries used by 2+ services; empty list `[]` for single-repo projects or if none detected
+**Field definitions:**
+
+| Field | Values | Notes |
+|-------|--------|-------|
+| `family` | `sync-rpc`, `messaging`, `streaming`, `graphql` | Transport family for coarse grouping |
+| `protocol` | `feign`, `http`, `grpc`, `kafka`, `rabbitmq`, `jms`, `solace-scs`, `solace-jcsmp`, `sns`, `sqs`, `azure-service-bus`, `google-pubsub`, `mqtt`, `redis-pubsub`, `kafkajs`, `nestjs-microservice`, `websocket`, `stomp`, `sse`, `rsocket`, `socketio`, `trpc`, `graphql`, ... | Specific transport protocol |
+| `type` | Same as `protocol` | Backward-compat synonym for `protocol`. Always emit alongside `protocol`. |
+| `direction` | `inbound`, `outbound` | `inbound` = this service receives; `outbound` = this service sends |
+| `target` | service name, URL, topic name, route path | What is being called/published-to/subscribed-to |
+| `schema_ref` | relative file path or `null` | Path to co-located schema contract file (OpenAPI, proto, AsyncAPI, Avro, GraphQL schema) |
+
+**Rules:**
+- `cross_service_edges`: list of detected communication edges; empty list `[]` if none
+- `shared_libraries`: list of libraries used by 2+ services; empty list `[]` for single-repo or if none
 - `auth_perimeter`: exactly one of `gateway`, `in-service-jwt`, `none`, or `unknown`
 - `ticket_prefix`: string (e.g. `"PLAT"`) or `null`
 - **Always emit this block** even when all signals are empty/unknown — the subsection must always be present in the report
+- **Edge extraction runs in workspace mode only.** In single-repo mode, emit `cross_service_edges: []`.
+
+### Backward-Compat: `type` ↔ `protocol` synonym
+
+The old schema used only `{type, target}`. The new schema uses `{family, protocol, type, direction, target, schema_ref}`. To preserve compatibility with consumers reading the old `type` field:
+
+- **Always emit `type` alongside `protocol`** with the same value
+- Consumers reading only `type` continue to work (e.g., `claudboard-workflow` checking `type: kafka`)
+- Consumers that understand the new schema should use `protocol` and `family` instead
+
+Example: old consumer reads `type: feign` → still works. New consumer reads `protocol: feign, family: sync-rpc, direction: outbound` → richer context.
+
+### Architectural Patterns
+
+```yaml
+architectural_patterns:
+  - {type: saga, style: orchestration, evidence: ["path/to/orchestrator.java:42"]}
+  - {type: cqrs, evidence: ["src/main/java/com/example/command/", "src/main/java/com/example/query/"]}
+  - {type: outbox, evidence: ["db/migrations/V42__create_outbox.sql"]}
+  - {type: circuit-breaker, library: resilience4j, evidence: ["path/with/@CircuitBreaker:88"]}
+  - {type: schema-registry, vendor: confluent, evidence: ["application.yml:schema.registry.url"]}
+  - {type: asyncapi, spec_path: "docs/asyncapi.yaml"}
+```
+
+- Emit `architectural_patterns: []` (empty list) when no patterns are detected
+- Pattern runs in both workspace and single-repo modes
+- BFF detection is workspace-only (requires sibling service context)
+- "Empty evidence → no entry" rule: omit a pattern entry when its minimum-signal threshold is not met
 
 ---
 
-## Detection: Cross-Service Edges
+## Sub-Catalogs
 
-Run after Wide Scan (Phase 1c). Piggybacks on data already collected — no additional file reads needed unless a target is unresolved.
+Transport-specific grep commands and extraction rules are in the sub-catalogs. Load the relevant files during analysis:
 
-Edge types and grep commands:
+| What to detect | Load file |
+|----------------|-----------|
+| REST clients, gRPC, tRPC, Connect-RPC, inbound routes | `edges/sync-rpc.md` |
+| Kafka, RabbitMQ, JMS, Solace, MQTT, Redis pub/sub, SNS/SQS, Service Bus | `edges/messaging.md` |
+| WebSocket, SSE, RSocket, socket.io | `edges/streaming.md` |
+| Spring GraphQL, DGS, Apollo, urql, graphql-request, Relay | `edges/graphql.md` |
+| Saga, CQRS, Outbox, BFF, Circuit Breaker, Schema Registry, AsyncAPI | `patterns/architectural.md` |
 
-### Feign (Java/Kotlin)
-
-```bash
-grep -rn '@FeignClient' --include='*.java' --include='*.kt' src/
-```
-
-- Extract the `name` attribute value as the target service name
-- Example match: `@FeignClient(name = "order-service")` → `{type: feign, target: "order-service"}`
-- If `name` attribute is absent, fall back to `value` attribute; if both absent → target = `unknown`
-
-### HTTP — RestTemplate / WebClient / RestClient (Java/Kotlin)
-
-```bash
-grep -rn 'RestTemplate\|new RestTemplate()\|RestClient\.builder()\|WebClient\.builder()' \
-  --include='*.java' --include='*.kt' src/
-```
-
-- Look for `.getForObject(`, `.postForEntity(`, `.exchange(` calls chained after the grep hits
-- Extract the URL string literal as target, or `unknown` if the URL is a variable/constant
-- Example: `restTemplate.getForObject("http://user-service/api/users", ...)` → `{type: http, target: "http://user-service/api/users"}`
-
-### HTTP — axios / fetch (TypeScript)
-
-```bash
-grep -rn 'axios\.create({.*baseURL\|fetch(' --include='*.ts' --include='*.tsx' src/
-```
-
-- Extract `baseURL` value from `axios.create({ baseURL: "..." })` as target
-- For bare `fetch(` calls: extract the URL string if it references a service name; skip relative paths (e.g., `/api/...` without a hostname)
-- Example: `axios.create({ baseURL: "http://order-service" })` → `{type: http, target: "http://order-service"}`
-
-### HTTP — requests (Python)
-
-```bash
-grep -rn 'requests\.get(\|requests\.post(\|requests\.put(\|requests\.delete(\|requests\.patch(' \
-  --include='*.py' src/
-```
-
-- Extract the URL string literal as target
-- Skip intra-service calls (localhost, 127.0.0.1, relative paths)
-- Example: `requests.get("http://inventory-service/stock")` → `{type: http, target: "http://inventory-service/stock"}`
-
-### Kafka Producer (Java/Kotlin)
-
-```bash
-grep -rn 'KafkaTemplate' --include='*.java' --include='*.kt' src/
-grep -rn '\.send(' --include='*.java' --include='*.kt' src/
-grep -rn '@SendTo' --include='*.java' --include='*.kt' src/
-```
-
-- For `KafkaTemplate.send("topic-name", ...)` → extract topic literal as target
-- For `@SendTo("topic-name")` → extract topic value as target
-- If topic is a constant reference (e.g., `KafkaTemplate.send(TOPIC_ORDERS, ...)`) → grep for the constant definition to resolve the string value; if unresolvable → target = `unknown`
-- Example: `kafkaTemplate.send("order-created", event)` → `{type: kafka, target: "order-created"}`
-
-### gRPC (Java / any language)
-
-```bash
-grep -rn 'ManagedChannelBuilder\.forAddress(' --include='*.java' --include='*.kt' src/
-find . -name '*.proto' ! -path '*/vendor/*' ! -path '*/node_modules/*'
-```
-
-- Any `ManagedChannelBuilder.forAddress(host, port)` → `{type: grpc, target: "<host-value-or-unknown>"}`
-- Any `.proto` file imports detected → `{type: grpc, target: "<service-name-from-proto-package-or-unknown>"}`
-- Extract host string literal from `forAddress`; if variable → `unknown`
+Also see `patterns/architectural.md` → "schema_ref Discovery" for the rule on capturing co-located schema contract files.
 
 ---
 
@@ -109,35 +93,29 @@ Only meaningful in **workspace or monorepo mode**. In single-repo mode, emit `sh
 ### Maven (Java/Kotlin)
 
 ```bash
-# Find all pom.xml files in the workspace (excluding vendor/build dirs)
 find . -name 'pom.xml' \
   ! -path '*/node_modules/*' ! -path '*/target/*' ! -path '*/.gradle/*'
 ```
 
-For each `pom.xml` found, extract all `<artifactId>` values within `<dependency>` sections.
-
-Count how many distinct `pom.xml` files reference each `<artifactId>`. Report those with count ≥ 2:
+For each `pom.xml` found, extract all `<artifactId>` values within `<dependency>` sections. Count how many distinct `pom.xml` files reference each `<artifactId>`. Report those with count ≥ 2:
 
 ```bash
-# Count per artifactId across all pom.xml files
 grep -rh '<artifactId>' --include='pom.xml' . \
   | sed 's/.*<artifactId>\(.*\)<\/artifactId>.*/\1/' \
   | sort | uniq -c | sort -rn | awk '$1 >= 2 {print $1, $2}'
 ```
 
-- Each result line → `{name: "<artifactId>", consumer_count: <N>}`
-- Filter out known external/third-party artifacts if they appear in root BOM only; focus on internal group IDs matching the project's `groupId` prefix
+Each result → `{name: "<artifactId>", consumer_count: <N>}`. Filter out known external artifacts; focus on internal group IDs.
 
 ### NPM Workspace (TypeScript/JavaScript)
 
 ```bash
-# Find all package.json files
 find . -name 'package.json' \
   ! -path '*/node_modules/*' ! -path '*/dist/*' ! -path '*/build/*'
 ```
 
-1. From the root `package.json`, identify workspace globs (e.g., `"workspaces": ["packages/*", "apps/*"]`)
-2. Collect all internal package names (packages listed in workspace globs or packages with names starting with `@<scope>/`)
+1. From root `package.json`, identify workspace globs
+2. Collect all internal package names (packages in workspace globs or `@<scope>/` prefix)
 3. Count how many other `package.json` files list each internal package in `dependencies` or `devDependencies`
 4. Report those with count ≥ 2: `{name: "<package-name>", consumer_count: <N>}`
 
@@ -145,65 +123,39 @@ find . -name 'package.json' \
 
 ## Detection: Auth Perimeter
 
-Classify into exactly one of: `gateway`, `in-service-jwt`, `none`, `unknown`.
-
-Apply in order — first match wins.
+Classify into exactly one of: `gateway`, `in-service-jwt`, `none`, `unknown`. Apply in order — first match wins.
 
 ### gateway
 
-Detect any of the following:
-
 ```bash
-# Service named gateway/api-gateway/proxy in workspace
-# (check directory names and spring.application.name)
 find . -maxdepth 3 -type d \( \
   -name '*gateway*' -o -name '*api-gateway*' -o -name '*proxy*' \
 \)
-
-# Spring Cloud Gateway dependency
 grep -rn 'spring-cloud-starter-gateway' --include='pom.xml' --include='*.gradle' --include='*.gradle.kts' .
-
-# Kong config
 find . -name 'kong.yml' -o -name 'kong.yaml'
-
-# Traefik config
 find . -name 'traefik.yml' -o -name 'traefik.yaml'
 ```
 
-If any of these match → `auth_perimeter: "gateway"`
+If any match → `auth_perimeter: "gateway"`
 
 ### in-service-jwt
 
-Detect any of the following (in source files, not config):
-
 ```bash
-# Spring Security JWT / OAuth2 Resource Server (Java/Kotlin)
-grep -rn 'JwtDecoder\|oauth2ResourceServer()' \
-  --include='*.java' --include='*.kt' src/
-
-# FastAPI OAuth2 (Python)
+grep -rn 'JwtDecoder\|oauth2ResourceServer()' --include='*.java' --include='*.kt' src/
 grep -rn 'OAuth2PasswordBearer' --include='*.py' src/
-
-# Express JWT middleware (TypeScript/JavaScript)
-grep -rn 'expressjwt\|jsonwebtoken' \
-  --include='*.ts' --include='*.js' --include='*.tsx' src/
+grep -rn 'expressjwt\|jsonwebtoken' --include='*.ts' --include='*.js' --include='*.tsx' src/
 ```
 
-If any of these match (and no gateway detected) → `auth_perimeter: "in-service-jwt"`
+If any match (and no gateway) → `auth_perimeter: "in-service-jwt"`
 
-### none
+### none / unknown
 
-No auth signals detected in any of the above checks → `auth_perimeter: "none"`
-
-### unknown
-
-Auth-related code found but does not match gateway or in-service-jwt patterns (e.g., custom session management, SAML, proprietary auth filter) → `auth_perimeter: "unknown"`
+- No auth signals → `auth_perimeter: "none"`
+- Auth signals found but do not match gateway or JWT patterns (custom session, SAML, proprietary) → `auth_perimeter: "unknown"`
 
 ---
 
 ## Detection: Ticket Prefix
-
-Run both commands; apply threshold rules to determine the prefix.
 
 ### Step 1: Scan commit messages
 
@@ -212,31 +164,26 @@ git log --oneline -50 | grep -oP '^[a-f0-9]+ [A-Z]+-[0-9]+' | grep -oP '[A-Z]+' 
   | sort | uniq -c | sort -rn | head -5
 ```
 
-- Count how many of the last 50 commits have a `^[A-Z]+-[0-9]+` prefix (e.g., `PLAT-1234`)
-- If ≥50% of the last 50 commits match AND ≥80% of those share the same alphabetic prefix → **use that prefix**
-
-Example: 30 out of 50 commits match (`≥50%`), 26 of those 30 have prefix `PLAT` (`≥87%`) → `ticket_prefix: "PLAT"`
+If ≥50% of the last 50 commits match AND ≥80% of those share the same alphabetic prefix → use that prefix.
 
 ### Step 2: Scan branch names (fallback)
-
-If Step 1 does not yield a prefix, try branch names:
 
 ```bash
 git branch -a | grep -oP '[a-z]+/([A-Z]+-[0-9]+)/' | grep -oP '[A-Z]+' \
   | sort | uniq -c | sort -rn | head -5
 ```
 
-- Apply the same threshold: ≥50% of last 20 branch names contain a `[A-Z]+-[0-9]+` segment AND ≥80% of those share the same alphabetic prefix → use that prefix
+Apply same threshold: ≥50% of last 20 branch names AND ≥80% share the same prefix → use that prefix.
 
 ### Step 3: Null fallback
 
-If neither Step 1 nor Step 2 yields a confident prefix → `ticket_prefix: null`
+If neither step yields a confident prefix → `ticket_prefix: null`
 
 ---
 
 ## Backward Compatibility
 
-Consumers (`claudboard-generate`, `claudboard-refresh`, `claudboard-techdebt`) treat a missing "### Workflow Signals" section as normal — they do not parse or use it. Only `claudboard-workflow` reads this subsection.
+Consumers (`claudboard-generate`, `claudboard-refresh`, `claudboard-techdebt`) treat a missing "### Workflow Signals" section as normal. Only `claudboard-workflow` reads this subsection.
 
 When the subsection is missing, `claudboard-workflow` warns:
 
@@ -247,3 +194,7 @@ and continues with all signals defaulted:
 - `shared_libraries: []`
 - `auth_perimeter: "unknown"`
 - `ticket_prefix: null`
+
+When `architectural_patterns` subsection is absent (old-schema report), `claudboard-workflow` defaults all pattern-derived flags to `false` and `claudboard-techdebt` suppresses architectural-pattern-gap findings with a warning:
+
+> "Architectural patterns subsection absent in analysis report — pattern-gap findings suppressed. Re-run `/analyse` to enable."

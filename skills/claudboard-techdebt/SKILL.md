@@ -171,6 +171,7 @@ Passes 1-4 can run in any order but all must complete before assigning IDs and d
 | Pass 2 | `references/design-debt-patterns.md` |
 | Pass 3 | `references/perf-debt-patterns.md` |
 | Pass 4 | `references/arch-debt-patterns.md` |
+| Pass 4b | `references/arch-pattern-gaps.md` |
 
 ### Pass 1: Code Smells
 
@@ -304,6 +305,27 @@ Load `references/arch-debt-patterns.md`.
 
 Create debt items. These go to `cross-cutting.md` unless they affect only one module.
 
+### Pass 4b: Architectural Pattern Gaps
+
+Load `references/arch-pattern-gaps.md`.
+
+**Prerequisite check (backward compatibility):** Before running any gap detection, verify the analysis report contains a `### Architectural Patterns` subsection.
+
+- **If the subsection is absent:** Emit a single warning at the top of each module's report section — do not create any gap debt items:
+
+  > "Architectural patterns subsection absent in analysis report — pattern-gap findings suppressed. Re-run `/analyse` to enable this check."
+
+  Then skip the remainder of Pass 4b entirely.
+
+- **If the subsection is present:** Run all three gap detections as documented in `arch-pattern-gaps.md`:
+  1. **Gap 1 — Missing Circuit Breaker**: check `workflow_signals.cross_service_edges` for outbound `sync-rpc`/`graphql` edges AND absence of `type: circuit-breaker` pattern entry; confirm with grep
+  2. **Gap 2 — Missing Outbox**: check for messaging edges AND `@Transactional` methods co-located with broker send calls AND absence of `type: outbox` pattern entry; confirm with grep
+  3. **Gap 3 — Missing Schema Registry**: check for `protocol: kafka` edges AND absence of `type: schema-registry` pattern entry; confirm with grep
+
+  For each gap that fires, emit the debt item under a `## Architectural Pattern Gaps` heading in the affected module's report. If no gaps fire, omit the heading entirely.
+
+  Assign IDs in the normal sequential or prefixed order alongside other Pass 4 items. Severity/effort values are fixed per gap as documented in `arch-pattern-gaps.md` — do not override from severity-matrix.md.
+
 ### Assign IDs
 
 **Single-project:** assign sequential IDs: `TD-001`, `TD-002`, ...
@@ -434,5 +456,6 @@ Before presenting the Phase 3 summary, verify:
 | `references/design-debt-patterns.md` | Phase 2 Pass 2 |
 | `references/perf-debt-patterns.md` | Phase 2 Pass 3 |
 | `references/arch-debt-patterns.md` | Phase 2 Pass 4 |
+| `references/arch-pattern-gaps.md` | Phase 2 Pass 4b — loaded after arch-debt-patterns.md |
 | `references/severity-matrix.md` | Phase 2 — all passes |
 | `references/report-template.md` | Phase 3 |
