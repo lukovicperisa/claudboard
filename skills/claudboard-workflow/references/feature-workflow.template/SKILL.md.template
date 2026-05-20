@@ -397,9 +397,10 @@ used to calculate work log durations later.
 
 ```bash
 WORKFLOW_START=$(date +%s)
+SESSION_JSONL_PATH=~/.claude/projects/$(pwd | sed 's|/|-|g')/$CLAUDE_CODE_SESSION_ID.jsonl
 ```
 
-Hold this value throughout the workflow. After Phase 1d, calculate the
+Hold `WORKFLOW_START` and `SESSION_JSONL_PATH` throughout the workflow. After Phase 1d, calculate the
 elapsed time and log it. Record a second timestamp (`CHECKPOINT`) to
 measure the implementation phase separately.
 
@@ -1084,6 +1085,21 @@ Once confirmed, execute Phases 2–7 autonomously without pausing.
 
 Call `mcp__bosch__phase_complete` with `{ num: 1 }`.
 
+Record Phase 1 spawn counts in the SPAWN_LOG context memo:
+
+<!-- IF TRACKER_JIRA -->
+```
+SPAWN_LOG:
+  phase1: jira-agent×1, sdd-expert×1, architect×1
+```
+<!-- ENDIF -->
+<!-- IF TRACKER_TR -->
+```
+SPAWN_LOG:
+  phase1: tr-agent×1, sdd-expert×1, architect×1
+```
+<!-- ENDIF -->
+
 ---
 
 ## Phase 2: Create branch
@@ -1146,6 +1162,11 @@ The agent will emit a JSON result block:
 ```
 
 Call `mcp__bosch__phase_complete` with `{ num: 2 }`.
+
+Append to the SPAWN_LOG:
+```
+  phase2: git-agent×1
+```
 
 ---
 
@@ -1288,6 +1309,12 @@ Only proceed to Phase 4 when **all checkpoints are complete** and every
 scenario in the BDD spec is satisfied.
 
 Call `mcp__bosch__phase_complete` with `{ num: 3 }`.
+
+Append to the SPAWN_LOG with actual spawn counts:
+```
+  phase3: impl-agent×N (baseline×1, CP×<checkpoint_count>)
+```
+where N = 1 (baseline) + number of checkpoints completed.
 
 <!-- IF TRACKER_JIRA -->
 **Note:** Test failures, lint failures, and build failures encountered during
@@ -1445,6 +1472,12 @@ will pass this to the PR agent in Phase 6.
 
 Call `mcp__bosch__phase_complete` with `{ num: 4 }`.
 
+Append to the SPAWN_LOG with actual spawn counts:
+```
+  phase4: git-agent×<N>
+```
+where N is the actual number of git-agent spawns used for committing.
+
 ---
 
 ## Phase 5: Review
@@ -1588,6 +1621,12 @@ Call `mcp__bosch__checkpoint_complete` with `{ num: 52 }`.
 
 Call `mcp__bosch__phase_complete` with `{ num: 5 }`.
 
+Append to the SPAWN_LOG with actual spawn counts:
+```
+  phase5: spec-reviewer×<N>, design-reviewer×<N>
+```
+where N is the actual number of spawns (0 if that reviewer was skipped).
+
 ---
 
 <!-- IF REPO_ADO -->
@@ -1697,6 +1736,12 @@ The agent will emit a JSON result block. Extract `prUrl` and tell the user.
 
 Call `mcp__bosch__phase_complete` with `{ num: 6 }`.
 
+Append to the SPAWN_LOG:
+```
+  phase6: pr-agent×1, git-agent×1
+```
+In workspace mode with multiple repos, use the actual PR and git-agent spawn counts.
+
 ---
 <!-- ENDIF -->
 
@@ -1759,6 +1804,12 @@ Call `mcp__bosch__agent_complete` with `{ name: "pr-agent-github" }`.
 The agent will emit a JSON result block. Extract `prUrl` and tell the user.
 
 Call `mcp__bosch__phase_complete` with `{ num: 6 }`.
+
+Append to the SPAWN_LOG:
+```
+  phase6: pr-agent×1, git-agent×1
+```
+In workspace mode with multiple repos, use the actual PR and git-agent spawn counts.
 
 ---
 <!-- ENDIF -->
@@ -1825,7 +1876,7 @@ Parameters:
 
 ### 7b. Cost analysis comment
 
-Build a per-phase/per-agent cost analysis and post it as a JIRA comment.
+Compute the actual session cost autonomously and post it as a JIRA comment.
 
 **Step 1:** Read the pricing reference:
 
@@ -1833,56 +1884,76 @@ Build a per-phase/per-agent cost analysis and post it as a JIRA comment.
 Read: .claude/skills/feature-workflow/references/claude-pricing.md
 ```
 
-**Step 2:** Collect workflow metadata:
-- Which agents were spawned during this run
-- How many checkpoints were completed
-- How many spawns per agent type
-- Whether context compaction occurred
+**Step 2:** Run the JSONL cost script to compute the actual session cost:
 
-**Step 3:** Ask the user for the actual session cost:
+```bash
+python3 - <<'PYEOF'
+import json, os
 
-> "Please type `/cost` and share the total so I can include the actual
-> figure in the JIRA comment."
+path = os.path.expanduser(os.environ.get('SESSION_JSONL_PATH', ''))
 
-Hold the actual cost value.
+RATES = {
+    'claude-sonnet-4-6': {'input': 3.00, 'cw5': 3.75, 'cw1h': 6.00, 'cr': 0.30, 'out': 15.00},
+    'claude-haiku-4-5':  {'input': 1.00, 'cw5': 1.25, 'cw1h': 2.00, 'cr': 0.10, 'out': 5.00},
+    'claude-opus-4-7':   {'input': 5.00, 'cw5': 6.25, 'cw1h': 10.00, 'cr': 0.50, 'out': 25.00},
+}
+DEFAULT = RATES['claude-sonnet-4-6']
 
-**Step 4:** Estimate per-agent costs using the agent profiles from the
-pricing reference. For each agent spawn, calculate:
-
+if not path or not os.path.exists(path):
+    print('ACTUAL_TOTAL=unavailable (session log not found)')
+else:
+    total = 0.0
+    with open(path) as f:
+        for line in f:
+            try:
+                e = json.loads(line.strip())
+            except Exception:
+                continue
+            usage = e.get('usage') or {}
+            if not usage:
+                continue
+            m = e.get('model', '')
+            r = next((v for k, v in RATES.items() if k in m), DEFAULT)
+            cc = e.get('cache_creation') or {}
+            cost = (
+                usage.get('input_tokens', 0) * r['input'] +
+                (cc.get('ephemeral_5m_input_tokens', 0) if isinstance(cc, dict) else 0) * r['cw5'] +
+                (cc.get('ephemeral_1h_input_tokens', 0) if isinstance(cc, dict) else 0) * r['cw1h'] +
+                usage.get('cache_read_input_tokens', 0) * r['cr'] +
+                usage.get('output_tokens', 0) * r['out']
+            ) / 1_000_000
+            total += cost
+    print(f'ACTUAL_TOTAL=${total:.2f}')
+PYEOF
 ```
-cost = (input_tokens × cache_write_rate + output_tokens × output_rate) / 1,000,000
-```
 
-Use the mid-range of each agent's profile. For the orchestrator, use the
-blended input rate (30% cache-write + 70% cache-hit).
+Hold the printed `ACTUAL_TOTAL` value from the script output.
 
-**Step 5:** Compose the JIRA comment using this template:
+**Step 3:** Build the per-phase/per-agent breakdown table from the SPAWN_LOG:
+
+For each phase/agent entry in the SPAWN_LOG, compute `spawns × mid-range profile cost`
+using the agent profiles from `claude-pricing.md`. Use the agent's model in the Model column.
+
+Then compute the orchestrator row:
+`orchestrator_cost = ACTUAL_TOTAL − Σ(all sub-agent row estimates)`
+
+If the result would be negative (profiles overestimated), set the orchestrator cost to `$0.00`
+and append `(sub-agent profiles overestimated; orchestrator cost absorbed)`.
+
+**Step 4:** Compose the JIRA comment using this structure:
 
 ```markdown
 ## AI-Assisted Development — Cost Analysis
 
-**Actual session cost:** $XX.XX (from `/cost`)
+**Actual session cost:** $<ACTUAL_TOTAL>
 
-### Per-Phase / Per-Agent Breakdown (estimated)
+### Per-Phase / Per-Agent Breakdown
 
-| Phase | Agent | Model | Est. Input | Est. Output | Est. Cost |
-|-------|-------|-------|-----------|-------------|-----------|
-| 1-pre Ticket | jira-agent | Haiku 4.5 | 8K | 2K | $0.02 |
-| 1a-d Clarify | Orchestrator | Sonnet 4.6 | 80K | 20K | $0.60 |
-| 1b Spec | sdd-expert | Sonnet 4.6 | 30K | 15K | $0.34 |
-| 1c Plan | architect | Sonnet 4.6 | 40K | 20K | $0.45 |
-| 1d Worklog | jira-agent | Haiku 4.5 | 8K | 2K | $0.02 |
-| 2 Branch | git-agent | Haiku 4.5 | 8K | 2K | $0.02 |
-| 3 Baseline | impl-agent | Sonnet 4.6 | 30K | 10K | $0.26 |
-| 3 CP 1 | impl-agent | Sonnet 4.6 | 150K | 50K | $1.31 |
-| ... | ... | ... | ... | ... | ... |
-| 4 Commit | git-agent (xN) | Haiku 4.5 | NK | NK | $X.XX |
-| 5a Spec review | spec-reviewer | Sonnet 4.6 | 50K | 8K | $0.31 |
-| 5b Design review | design-reviewer | Sonnet 4.6 | 50K | 8K | $0.31 |
-| 6 PR | pr-agent + git | Sonnet+Haiku | 25K | 5K | $0.17 |
-| 7 Finalize | jira-agent (x3) | Haiku 4.5 | 24K | 6K | $0.06 |
-| Orchestrator (impl) | — | Sonnet 4.6 | 200K | 60K | $1.65 |
-| **Total estimate** | | | | | **$X.XX** |
+| Phase | Agent | Model | Spawns | Est. Cost |
+|-------|-------|-------|--------|-----------|
+| <phase> | <agent> | <model> | <N> | $<est> |
+| ... | ... | ... | ... | ... |
+| Orchestrator | — | Sonnet 4.6 | — | $<orchestrator_cost> |
 
 ### Pricing Rates Used
 
@@ -1891,17 +1962,10 @@ blended input rate (30% cache-write + 70% cache-hit).
 | Sonnet 4.6 | $3.75/MTok | $0.30/MTok | $15/MTok |
 | Haiku 4.5 | $1.25/MTok | $0.10/MTok | $5/MTok |
 
-> Per-agent estimates use cache-write rate for input (fresh context per spawn).
-> Orchestrator uses blended rate (30% cache-write, 70% cache-hit).
-> Delta between estimate and actual reflects context compaction, retries,
-> and estimation error.
+> Actual total from session token log (includes all agent spawns). Phase 7 finalization (~$0.05–0.15) not included. Per-agent rows are profile estimates × actual spawn count.
 ```
 
-Fill in actual values from the run: number of checkpoints, agent spawns,
-and the actual total from `/cost`. Use mid-range values from the agent
-profiles in the pricing reference for the token estimates.
-
-**Step 6:** Post the comment:
+**Step 5:** Post the comment:
 
 ```
 Tool: Agent
@@ -1979,7 +2043,53 @@ Hold `IMPL_ELAPSED` and the previously held `REFINEMENT_ELAPSED` from Phase
 
 ### 7b. Summary comment (with time data)
 
-Build the summary comment including time data for both phases:
+Run the JSONL cost script to compute the actual session cost (reference `SESSION_JSONL_PATH` captured at Phase 1 kickoff):
+
+```bash
+python3 - <<'PYEOF'
+import json, os
+
+path = os.path.expanduser(os.environ.get('SESSION_JSONL_PATH', ''))
+
+RATES = {
+    'claude-sonnet-4-6': {'input': 3.00, 'cw5': 3.75, 'cw1h': 6.00, 'cr': 0.30, 'out': 15.00},
+    'claude-haiku-4-5':  {'input': 1.00, 'cw5': 1.25, 'cw1h': 2.00, 'cr': 0.10, 'out': 5.00},
+    'claude-opus-4-7':   {'input': 5.00, 'cw5': 6.25, 'cw1h': 10.00, 'cr': 0.50, 'out': 25.00},
+}
+DEFAULT = RATES['claude-sonnet-4-6']
+
+if not path or not os.path.exists(path):
+    print('ACTUAL_TOTAL=unavailable (session log not found)')
+else:
+    total = 0.0
+    with open(path) as f:
+        for line in f:
+            try:
+                e = json.loads(line.strip())
+            except Exception:
+                continue
+            usage = e.get('usage') or {}
+            if not usage:
+                continue
+            m = e.get('model', '')
+            r = next((v for k, v in RATES.items() if k in m), DEFAULT)
+            cc = e.get('cache_creation') or {}
+            cost = (
+                usage.get('input_tokens', 0) * r['input'] +
+                (cc.get('ephemeral_5m_input_tokens', 0) if isinstance(cc, dict) else 0) * r['cw5'] +
+                (cc.get('ephemeral_1h_input_tokens', 0) if isinstance(cc, dict) else 0) * r['cw1h'] +
+                usage.get('cache_read_input_tokens', 0) * r['cr'] +
+                usage.get('output_tokens', 0) * r['out']
+            ) / 1_000_000
+            total += cost
+    print(f'ACTUAL_TOTAL=${total:.2f}')
+PYEOF
+```
+
+Hold the printed `ACTUAL_TOTAL` value. Build the per-phase/per-agent breakdown table from the SPAWN_LOG
+(same method as JIRA variant: spawns × mid-range profile, orchestrator row = `ACTUAL_TOTAL − Σ(sub_agent_estimates)`).
+
+Build the summary comment including time data and computed cost:
 
 ```markdown
 ## AI-Assisted Development — Summary
@@ -1997,14 +2107,15 @@ Build the summary comment including time data for both phases:
 
 ### Cost Analysis
 
-**Actual session cost:** $XX.XX (from `/cost`)
+**Actual session cost:** $<ACTUAL_TOTAL>
 
-| Phase | Agent | Model | Est. Cost |
-|-------|-------|-------|-----------|
-| ... | ... | ... | ... |
-| **Total estimate** | | | **$X.XX** |
+| Phase | Agent | Model | Spawns | Est. Cost |
+|-------|-------|-------|--------|-----------|
+| <phase> | <agent> | <model> | <N> | $<est> |
+| ... | ... | ... | ... | ... |
+| Orchestrator | — | Sonnet 4.6 | — | $<orchestrator_cost> |
 
-> Delta between estimate and actual reflects context compaction and retries.
+> Actual total from session token log (includes all agent spawns). Phase 7 finalization (~$0.05–0.15) not included. Per-agent rows are profile estimates × actual spawn count.
 ```
 
 Post the comment via tr-agent:
