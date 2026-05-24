@@ -28,16 +28,36 @@ Path defaults to the current working directory.
 
 **Recommendation:** Run this skill in a fresh Claude Code session for best results. The analysis phase fills context with discovery data that isn't needed for generation — a clean session gives better output quality.
 
-Look for `.claude/reports/claudboard-analysis.md` in the target project.
+### 1a. Detect mode and locate reports
 
-**If found:**
+**Workspace detection:** Check if the current directory is a workspace root
+(contains subdirectories with independent `.git/` repos and build files). If so,
+look for `<workspace>/.claude/reports/claudboard-analysis-workspace.md`.
+
+**Single-project / monorepo:** Look for `.claude/reports/claudboard-analysis.md`
+in the target project.
+
+### 1b. Load reports
+
+**Workspace mode** (workspace summary report found):
+- Read the workspace summary report
+- Read each per-repo report from the workspace reports directory:
+  `<workspace>/.claude/reports/claudboard-analysis-<repo-name>.md`.
+  Do NOT look for reports in per-repo `.claude/reports/` directories — the
+  workspace report directory is the single source of truth.
+- Validate each: check that "Proposed Artifacts" section exists. If missing for a
+  repo, warn "Report for <name> is incomplete — skipping. Re-run `/analyse`." and
+  continue with remaining repos.
+- Display a summary of the Proposed Artifacts per repo
+
+**Single-project / monorepo** (`.claude/reports/claudboard-analysis.md` found):
 - Read the report
 - Check `generated_at` in frontmatter — if older than 24 hours, warn: "Analysis report is N days old. Consider running `/analyse` first for fresh results."
 - Validate structure: check that "Proposed Artifacts" section exists. If missing, tell user: "Analysis report is incomplete or malformed — missing 'Proposed Artifacts' section. Run `/analyse` again to regenerate." Stop here.
 - **Check for monorepo mode:** look for `claudboard-analysis-*.md` files alongside the global report. If found, read each per-service report. Validate each: if a per-service report is missing "Proposed Artifacts", warn "Service report for <name> is incomplete — skipping that service. Re-run `/analyse` to regenerate." and continue with remaining services.
 - Display a summary of the Proposed Artifacts section (global + per-service if monorepo)
 
-**If not found:**
+**If no report found:**
 - Tell the user: "No analysis report found. Run `/analyse` first to scan the codebase, then `/generate` to create artifacts."
 - Stop here. Do not run analysis inline — the two-step workflow ensures the user reviews findings before generation.
 

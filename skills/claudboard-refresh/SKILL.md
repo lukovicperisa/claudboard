@@ -53,6 +53,14 @@ Read all existing Claude artifacts and build a coverage map:
 - Note which have `references/` and `scripts/` subdirs
 
 ### 2d. Prior analysis report
+
+**Workspace mode** (detected in Phase 1 or from CWD structure): Read the report
+from the workspace reports directory — `<workspace>/.claude/reports/claudboard-analysis-<repo-name>.md`
+for the current repo, or `claudboard-analysis-workspace.md` for workspace-level
+refresh. Do NOT look in per-repo `.claude/reports/` — the workspace report
+directory is the single source of truth.
+
+**Single-project / monorepo:**
 - Check for `.claude/reports/claudboard-analysis.md`
 - If found: read `generated_at` timestamp for delta comparison and check `monorepo: true` in frontmatter
 - **Monorepo:** also list all `claudboard-analysis-<name>.md` files — these represent the previously detected services. Record service names (derived from filenames) as the prior service list.
@@ -250,7 +258,12 @@ For tech debt analysis and refactoring tickets: run `/techdebt`
 
 ## Phase 6: Save Updated Report
 
-Overwrite `.claude/reports/claudboard-analysis.md` with a fresh full analysis (combining prior report data with new discoveries). Update `generated_at` timestamp.
+**Single-project / monorepo:** Overwrite `.claude/reports/claudboard-analysis.md` with a fresh full analysis (combining prior report data with new discoveries). Update `generated_at` timestamp.
+
+**Workspace mode:** Overwrite the report in the workspace reports directory —
+`<workspace>/.claude/reports/claudboard-analysis-<repo-name>.md` for service-level
+refresh, or `claudboard-analysis-workspace.md` for workspace-level refresh. Do NOT
+write to per-repo `.claude/reports/`.
 
 ---
 

@@ -152,6 +152,10 @@ content: What/How/Why/Quality Assessment/Proposed Artifacts/Workflow Signals)
 to this exact absolute path BEFORE returning:
   <report-path>
 
+Write ONLY to <report-path>. Do NOT also write to <repo-path>/.claude/reports/.
+The workspace report directory is the single source of truth — per-repo copies
+are not created in workspace mode.
+
 The report MUST include this YAML frontmatter:
 ---
 generated_at: <ISO 8601 timestamp>
@@ -1009,7 +1013,7 @@ Then ask:
 
 ## Constraints
 
-- **Read-only for source code.** Files written depend on mode: single-project writes `.claude/reports/claudboard-analysis.md`; monorepo additionally writes `.claude/reports/claudboard-analysis-<service>.md` per service; workspace writes `<workspace>/.claude/reports/claudboard-analysis-workspace.md` plus `<workspace>/.claude/reports/claudboard-analysis-<repo>.md` per service repo (by sub-agents) and `<repo>/.claude/memories/ecosystem.md` per service repo (by orchestrator).
+- **Read-only for source code.** Files written depend on mode: single-project writes `.claude/reports/claudboard-analysis.md`; monorepo additionally writes `.claude/reports/claudboard-analysis-<service>.md` per service; workspace writes `<workspace>/.claude/reports/claudboard-analysis-workspace.md` plus `<workspace>/.claude/reports/claudboard-analysis-<repo>.md` per service repo (by sub-agents) and `<repo>/.claude/memories/ecosystem.md` per service repo (by orchestrator). In workspace mode, per-repo `.claude/reports/` directories are NOT written — the workspace report directory is the single source of truth.
 - **Never modify source code, tests, or existing files.**
 - **Max ~50 source files read** for large repos — note sampling in report.
 - **Secrets found during scan:** Report file:line only, never print the value.

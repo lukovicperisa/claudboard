@@ -451,6 +451,7 @@ Before writing any files, present a complete summary and wait for user approval.
   ├── references/
   │   └── claude-pricing.md
   ├── scripts/
+  │   ├── jira-add-labels.sh     ← only if TRACKER_JIRA=true
   │   ├── lib.sh
   │   ├── load-repo-context.sh   ← [workspace mode only]
   │   ├── prepare-commit.sh
@@ -530,10 +531,45 @@ find <workspace> -maxdepth 3 -type d \
 
 ## Phase 6: Template Rendering and File Writes
 
-Read each template file from `references/feature-workflow.template/`, render it,
-and write the output to the target path under `.claude/skills/feature-workflow/`.
+Resolve the absolute path of `references/feature-workflow.template/` relative to
+this skill file. Hold it as `$TEMPLATE_DIR` for the rest of this phase.
 
-### 6a. Template rendering algorithm
+### 6a. Batch-copy verbatim files
+
+Verbatim files have no `.template` suffix — no flag evaluation or variable
+substitution needed. Copy them via a single bash block to avoid loading file
+contents into the conversation context. **Do NOT use Read+Write for these files.**
+
+```bash
+mkdir -p "$SKILL_TARGET/agents" "$SKILL_TARGET/scripts" "$SKILL_TARGET/references"
+
+# Unconditional copies
+cp "$TEMPLATE_DIR/scripts/lib.sh"                "$SKILL_TARGET/scripts/"
+cp "$TEMPLATE_DIR/scripts/prepare-commit.sh"     "$SKILL_TARGET/scripts/"
+cp "$TEMPLATE_DIR/scripts/prepare-pr.sh"         "$SKILL_TARGET/scripts/"
+cp "$TEMPLATE_DIR/scripts/prepare-squash.sh"     "$SKILL_TARGET/scripts/"
+cp "$TEMPLATE_DIR/references/claude-pricing.md"  "$SKILL_TARGET/references/"
+```
+
+Conditional copies — run each `cp` only when the corresponding flag is `true`:
+
+| Flag | File |
+|------|------|
+| `TRACKER_JIRA` | `cp "$TEMPLATE_DIR/agents/jira-agent.md" "$SKILL_TARGET/agents/"` |
+| `TRACKER_JIRA` | `cp "$TEMPLATE_DIR/scripts/jira-add-labels.sh" "$SKILL_TARGET/scripts/"` |
+| `TRACKER_TR` | `cp "$TEMPLATE_DIR/agents/tr-agent.md" "$SKILL_TARGET/agents/"` |
+| `REPO_ADO` | `cp "$TEMPLATE_DIR/agents/pr-agent-ado.md" "$SKILL_TARGET/agents/"` |
+| `REPO_GITHUB` | `cp "$TEMPLATE_DIR/agents/pr-agent-github.md" "$SKILL_TARGET/agents/"` |
+| `WORKSPACE_MODE` | `cp "$TEMPLATE_DIR/scripts/load-repo-context.sh" "$SKILL_TARGET/scripts/"` |
+
+Verify that all expected files exist after the copy:
+
+```bash
+ls -la "$SKILL_TARGET/scripts/" "$SKILL_TARGET/references/"
+ls -la "$SKILL_TARGET/agents/"  # conditional files only
+```
+
+### 6b. Template rendering algorithm
 
 For each `.template` file:
 
@@ -569,38 +605,40 @@ Write to `.claude/skills/feature-workflow/<relative-path-within-template-dir>`.
 
 Verify the write succeeded before moving to the next file.
 
-### 6b. File mapping
+### 6c. File mapping
+
+**Templated files** (rendered in 6b, written via Write tool):
 
 | Template file | Output file |
 |---------------|-------------|
-| `SKILL.md.template` | `.claude/skills/feature-workflow/SKILL.md` |
-| `config.json.template` | `.claude/skills/feature-workflow/config.json` |
-| `agents/architect-agent.md.template` | `.claude/skills/feature-workflow/agents/architect-agent.md` |
-| `agents/design-reviewer.md.template` | `.claude/skills/feature-workflow/agents/design-reviewer.md` |
-| `agents/git-agent.md.template` | `.claude/skills/feature-workflow/agents/git-agent.md` |
-| `agents/implementation-agent.md.template` | `.claude/skills/feature-workflow/agents/implementation-agent.md` |
-| `agents/jira-agent.md` (verbatim, TRACKER_JIRA only) | `.claude/skills/feature-workflow/agents/jira-agent.md` |
-| `agents/tr-agent.md` (verbatim, TRACKER_TR only) | `.claude/skills/feature-workflow/agents/tr-agent.md` |
-| `agents/pr-agent-ado.md` (verbatim, REPO_ADO only) | `.claude/skills/feature-workflow/agents/pr-agent-ado.md` |
-| `agents/pr-agent-github.md` (verbatim, REPO_GITHUB only) | `.claude/skills/feature-workflow/agents/pr-agent-github.md` |
-| `agents/sdd-expert-agent.md.template` | `.claude/skills/feature-workflow/agents/sdd-expert-agent.md` |
-| `agents/spec-reviewer.md.template` | `.claude/skills/feature-workflow/agents/spec-reviewer.md` |
-| `references/claude-pricing.md` (verbatim) | `.claude/skills/feature-workflow/references/claude-pricing.md` |
-| `scripts/lib.sh` (verbatim) | `.claude/skills/feature-workflow/scripts/lib.sh` |
-| `scripts/prepare-commit.sh` (verbatim) | `.claude/skills/feature-workflow/scripts/prepare-commit.sh` |
-| `scripts/prepare-pr.sh` (verbatim) | `.claude/skills/feature-workflow/scripts/prepare-pr.sh` |
-| `scripts/prepare-squash.sh` (verbatim) | `.claude/skills/feature-workflow/scripts/prepare-squash.sh` |
-| `scripts/load-repo-context.sh` (verbatim, WORKSPACE_MODE only) | `.claude/skills/feature-workflow/scripts/load-repo-context.sh` |
+| `SKILL.md.template` | `SKILL.md` |
+| `config.json.template` | `config.json` |
+| `agents/architect-agent.md.template` | `agents/architect-agent.md` |
+| `agents/design-reviewer.md.template` | `agents/design-reviewer.md` |
+| `agents/git-agent.md.template` | `agents/git-agent.md` |
+| `agents/implementation-agent.md.template` | `agents/implementation-agent.md` |
+| `agents/sdd-expert-agent.md.template` | `agents/sdd-expert-agent.md` |
+| `agents/spec-reviewer.md.template` | `agents/spec-reviewer.md` |
 
-**Verbatim files** (no `.template` suffix, no rendering needed): copy as-is.
-Conditional verbatim files — write only when the corresponding flag is true:
-- `jira-agent.md` → only when `TRACKER_JIRA = true`
-- `tr-agent.md` → only when `TRACKER_TR = true`
-- `pr-agent-ado.md` → only when `REPO_ADO = true`
-- `pr-agent-github.md` → only when `REPO_GITHUB = true`
-- `load-repo-context.sh` → only when `WORKSPACE_MODE = true`
+All output paths are relative to `$SKILL_TARGET`.
 
-### 6c. Upgrade path footer
+**Verbatim files** (batch-copied in 6a via bash — NOT read into context):
+
+| File | Condition |
+|------|-----------|
+| `scripts/lib.sh` | always |
+| `scripts/prepare-commit.sh` | always |
+| `scripts/prepare-pr.sh` | always |
+| `scripts/prepare-squash.sh` | always |
+| `references/claude-pricing.md` | always |
+| `agents/jira-agent.md` | `TRACKER_JIRA = true` |
+| `scripts/jira-add-labels.sh` | `TRACKER_JIRA = true` |
+| `agents/tr-agent.md` | `TRACKER_TR = true` |
+| `agents/pr-agent-ado.md` | `REPO_ADO = true` |
+| `agents/pr-agent-github.md` | `REPO_GITHUB = true` |
+| `scripts/load-repo-context.sh` | `WORKSPACE_MODE = true` |
+
+### 6d. Upgrade path footer
 
 After rendering `SKILL.md.template`, append the following section at the bottom
 of the rendered `.claude/skills/feature-workflow/SKILL.md` before writing:
@@ -615,7 +653,7 @@ To regenerate with updated templates, remove this directory and re-run
 
 Replace `{{GENERATION_DATE}}` with today's date in `YYYY-MM-DD` format.
 
-### 6d. Write config.json
+### 6e. Write config.json
 
 After rendering `config.json.template`, parse the rendered content and write it
 as properly formatted JSON to `.claude/skills/feature-workflow/config.json`.
@@ -633,6 +671,7 @@ After all files are written, present a full completion report.
   .claude/skills/feature-workflow/SKILL.md
   .claude/skills/feature-workflow/config.json
   .claude/skills/feature-workflow/references/claude-pricing.md
+  .claude/skills/feature-workflow/scripts/jira-add-labels.sh    ← if TRACKER_JIRA
   .claude/skills/feature-workflow/scripts/lib.sh
   .claude/skills/feature-workflow/scripts/prepare-commit.sh
   .claude/skills/feature-workflow/scripts/prepare-pr.sh
