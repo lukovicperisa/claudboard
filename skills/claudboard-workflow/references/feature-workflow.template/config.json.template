@@ -71,6 +71,9 @@
     "branchTypes": ["feature", "bugfix", "hotfix"],
     "branchPattern": "{{GIT_BRANCH_PATTERN}}",
     "ticketRegex": "[A-Z]+-[0-9]+"
+  },
+  "clarify": {
+    "defaultAutonomy": "{{CLARIFY_AUTONOMY_DEFAULT}}"
   }<!-- IF WORKSPACE_MODE -->,
   "repos": {{REPOS_MAP_JSON}}
 <!-- ENDIF -->

@@ -191,6 +191,7 @@ Main agent (Sonnet 4.6)
 │   │   (Path B unavailable on T&R — user must provide existing ticket key)
 │   │         Record WORKFLOW_START timestamp
 <!-- ENDIF -->
+│   ├── 1-syn. Stated synthesis        (main — print + optional block)
 │   ├── 1a. Clarify scope              (main — conversation)
 <!-- IF TRACKER_JIRA -->
 │   │         → spawn jira-agent (updateDescription)
@@ -254,6 +255,7 @@ Workspace-mode orchestration (N repos)
 ├── Phase 1: Ticket, clarify, specify, affected_repos, plan
 │   ├── 1-pre. Ticket setup (TRACKER_JIRA: create/fetch via jira-agent;
 │   │                        TRACKER_TR:  fetch only via tr-agent)
+│   ├── 1-syn. Stated synthesis        (main — print + optional block)
 │   ├── 1a. Clarify scope
 │   ├── 1b. Create BDD spec            → spawn sdd-expert-agent
 │   ├── 1c. Affected repos inference   → spawn architect-agent
@@ -378,6 +380,50 @@ Parameters:
 If `tr.transitions.failure` is `null`: skip step 1 but still surface the
 error and halt.
 <!-- ENDIF -->
+
+---
+
+## Clarification autonomy
+
+After configuration validation and before Phase 1-pre, prompt the user to
+choose a clarification autonomy level. Read `config.clarify.defaultAutonomy`
+from `config.json` (fallback `balanced` when the field is absent or invalid),
+then present:
+
+```
+Clarification autonomy: {{CLARIFY_AUTONOMY_DEFAULT}} — accept [Enter] or override [a / b / c / d]?
+```
+
+Accept the response and hold the resolved level as `<autonomyLevel>` throughout
+the entire workflow. Valid values and their one-letter codes:
+
+| Code | Level | Behavior summary |
+|------|-------|-----------------|
+| `a` | `autopilot` | Skip Clarify (1a) entirely. Synthesis (1-syn) prints but does NOT block. Affected-repos auto-confirmed (workspace). All clarification dimensions accumulated as assumptions for the 1d gate. |
+| `b` | `balanced` | 8-dimension enumeration rubric in 1a. Every `unclear` dimension becomes a question. Synthesis blocks for confirmation. |
+| `c` | `guided` | 3-dimension direction-only rubric in 1a. Synthesis blocks for confirmation. Dimensions 4–8 deferred as gate assumptions. |
+| `d` | `manual` | Free-form chat clarification in 1a; continues only when user types `proceed`. Synthesis blocks for confirmation. |
+
+**After the user responds**, print a one-line summary of the resolved level:
+
+```
+Clarification autonomy: autopilot — Clarify phase will be skipped; synthesis will print without blocking.
+Clarification autonomy: balanced — Structured rubric; questions for every unclear dimension.
+Clarification autonomy: guided — Direction questions only; lower-priority dimensions deferred to gate.
+Clarification autonomy: manual — Free-form chat; type "proceed" when you're satisfied.
+```
+
+**No-persistence rule:** Per-invocation overrides do NOT modify `config.json`. The
+next invocation re-prompts with the unchanged `config.clarify.defaultAutonomy`
+value. To change the project default, the user edits `config.json` directly.
+
+**No per-feature memory:** The orchestrator does NOT read or write any per-feature
+autonomy state under `.claude/changes/<TICKET>/`. Autonomy is resolved fresh at
+every invocation from the config default and the current-invocation override.
+
+**Scope guardrail:** `<autonomyLevel>` gates only Phase 1-syn, 1a, and 1a-ws.
+All other phases (2 through 7) and the 1d gate are UNAFFECTED — the gate always
+fires regardless of autonomy level.
 
 ---
 
@@ -656,25 +702,159 @@ Do NOT proceed to Phase 1a without a ticket key. Wait for the user to
 provide a ticket key, then restart the workflow.
 <!-- ENDIF -->
 
+### 1-syn. Stated synthesis
+
+Before asking any clarification questions, externalize the orchestrator's
+internal understanding of the feature by emitting a synthesis. This phase
+always fires — for every autonomy level, for every ticket count.
+
+**Context grounding (do before synthesizing):**
+
+When any of the following files are present, read them before synthesizing:
+- `CLAUDE.md` (project root)
+- `.claude/memories/ecosystem.md` (or equivalent ecosystem memory file)
+- (Workspace mode) Per-repo analysis reports under `.claude/reports/`
+
+Use the project's documented architecture, vocabulary, and service topology to
+ground the synthesis — name services that actually exist, flag "the ticket implies
+X but no such service is documented." When none of these files exist, synthesize
+from ticket text alone and note in the synthesis output: "No project context
+available — synthesis based on ticket text only."
+
+**Synthesis output shape:**
+
+Emit a user-facing block with:
+
+1. **2–3 paragraph plain-English summary** of the feature as the orchestrator
+   understands it — purpose, expected behavior, and likely impact.
+2. **Scope boundaries** (best-effort) — what is in scope and what is explicitly
+   out of scope based on the ticket text and project context.
+3. **(Multi-ticket input only)** **Proposed slicing** — a bullet list of how the
+   orchestrator proposes to treat the tickets as one feature, with one-line
+   justification per slice.
+
+**Blocking behavior by autonomy level:**
+
+| `<autonomyLevel>` | Behavior |
+|-------------------|----------|
+| `autopilot` | Print synthesis as informational output and continue immediately to 1a (which will be skipped). Do NOT wait for user input. |
+| `balanced` | Print synthesis, then HALT. Wait for user to respond with `confirm` or `correct: <feedback>`. |
+| `guided` | Print synthesis, then HALT. For multi-ticket input, the blocking confirmation MUST cover BOTH the prose summary AND the proposed slicing in a single exchange — slicing is a direction-level decision and is NOT auto-accepted in guided mode. |
+| `manual` | Print synthesis, then HALT. Wait for user `confirm` or `correct: <feedback>`. |
+
+**Correction loop (balanced / guided / manual):**
+
+On `correct: <feedback>`:
+- If the feedback is concrete and unambiguous: re-synthesize incorporating the
+  feedback verbatim, re-print the new synthesis, and re-block for `confirm` or
+  `correct: <feedback>`. No upper limit on correction cycles.
+- If the feedback is vague or has an ambiguous referent (e.g., "this is wrong"
+  with no specifics, or feedback that could apply to multiple parts of the
+  synthesis): ask ONE targeted clarifying question about the feedback BEFORE
+  re-synthesizing. Do NOT guess and re-synthesize blindly.
+
+**Hold** the confirmed (or autopilot-printed) synthesis as the orchestrator's
+working understanding of the feature. Pass it to subsequent phases as the basis
+for the BDD spec scope.
+
 ### 1a. Clarify scope
 
-Ask targeted questions until every aspect of the feature is understood. You
-are building the foundation for an exhaustive spec, so do not leave
-ambiguities — dig until the picture is complete.
+Branch on `<autonomyLevel>`:
 
-Things worth clarifying:
-- Which {{REPO_OR_SERVICE_LABEL}} is this for?
-- Is there a user-facing impact, or is it internal/infra?
-- Any known constraints or related tickets?
-- Who are the actors? What are their roles and permissions?
-- What are the error and edge cases?
-- Are there authorization requirements?
-- Are there event/integration boundaries (e.g., cross-service calls)?
-- What validation rules apply to inputs?
+#### autopilot — skip
+
+Skip 1a entirely. Proceed directly to 1b using the post-synthesis scope as
+the clarified scope.
+
+Accumulate all eight canonical clarification dimensions as "assumed from
+synthesis" entries for the 1d gate assumptions list:
+
+1. Target {{REPO_OR_SERVICE_LABEL}} — assumed from synthesis
+2. User-facing impact — assumed from synthesis
+3. Constraints and related tickets — assumed from synthesis
+4. Actors and roles — assumed from synthesis
+5. Error and edge cases — assumed from synthesis
+6. Authorization requirements — assumed from synthesis
+7. Integration/event boundaries — assumed from synthesis
+8. Input validation rules — assumed from synthesis
+
+Also treat the post-synthesis scope as the clarified scope for the ticket
+description update step below.
+
+#### balanced — 8-dimension enumeration rubric
+
+Before asking any question, enumerate all eight dimensions and mark each:
+
+```
+1. Target {{REPO_OR_SERVICE_LABEL}}:   clear: <statement> | unclear: <what is missing>
+2. User-facing impact:  clear: <statement> | unclear: <what is missing>
+3. Constraints / related tickets:  clear: <statement> | unclear: <what is missing>
+4. Actors and roles:  clear: <statement> | unclear: <what is missing>
+5. Error and edge cases:  clear: <statement> | unclear: <what is missing>
+6. Authorization requirements:  clear: <statement> | unclear: <what is missing>
+7. Integration / event boundaries:  clear: <statement> | unclear: <what is missing>
+8. Input validation rules:  clear: <statement> | unclear: <what is missing>
+```
+
+Present the full rubric to the user (all eight lines with their `clear`/`unclear`
+marks and explanatory statements). The user can push back on any dimension
+marked `clear` that they believe needs clarification — treat a pushback as an
+`unclear` and generate a question for it.
+
+Every dimension marked `unclear` MUST become a question to the user. The
+orchestrator MAY NOT proceed to 1b while any dimension remains `unclear`.
+
+After the user answers, re-evaluate the rubric in light of the new information.
+Any dimensions that remain `unclear` generate follow-up questions. Loop until
+every dimension is `clear`.
 {{STACK_REMINDERS}}
 
-**After scope is fully clarified**, update the ticket description —
-but only if it needs updating:
+#### guided — 3-dimension direction rubric
+
+Before asking any question, enumerate the three direction-level dimensions:
+
+```
+1. Target {{REPO_OR_SERVICE_LABEL}}:   clear: <statement> | unclear: <what is missing>
+2. Change shape (new feature / refactor / bugfix / removal):  clear: <statement> | unclear: <what is missing>
+3. Scope boundary (what's in, what's deferred):  clear: <statement> | unclear: <what is missing>
+```
+
+Present the full 3-dimension rubric to the user. The user can push back on
+any `clear` mark — treat a pushback as an `unclear` and generate a question.
+
+Every `unclear` MUST become a question. Loop until all three dimensions are
+`clear`.
+
+Defer dimensions 4–8 from the balanced rubric (actors, error cases,
+authorization, integration boundaries, validation rules) to downstream agents
+(`sdd-expert-agent`'s `openQuestions` and `architect-agent`'s `risks`).
+Accumulate deferred dimensions 4–8 as "assumed from ticket text" entries for
+the 1d gate assumptions list.
+
+#### manual — free-form chat
+
+Ask the user about all eight canonical clarification dimensions in conversation
+form (not a structured rubric):
+
+1. Which {{REPO_OR_SERVICE_LABEL}} is this for?
+2. Is there a user-facing impact, or is it internal/infra?
+3. Any known constraints or related tickets?
+4. Who are the actors? What are their roles and permissions?
+5. What are the error and edge cases?
+6. Are there authorization requirements?
+7. Are there event/integration boundaries (e.g., cross-service calls)?
+8. What validation rules apply to inputs?
+{{STACK_REMINDERS}}
+
+Ask follow-up questions as needed. Do NOT proceed to 1b until the user
+responds with `proceed` (or an equivalent affirmative like "done", "that's
+everything", "move on"). Free-form chat continues across as many exchanges
+as needed.
+
+---
+
+**After scope is fully clarified** (or skipped in autopilot), update the
+ticket description — but only if it needs updating:
 
 - **Newly created ticket** (`existingDescription` is `false`): always
   update — refine the initial description with the fully clarified scope.
@@ -787,7 +967,16 @@ at `.claude/rules/`) to infer which repos are touched. It returns:
 }
 ```
 
-**Present to the user:**
+**User confirmation — gated by `<autonomyLevel>`:**
+
+| `<autonomyLevel>` | Behavior |
+|-------------------|----------|
+| `autopilot` | Auto-confirm the inferred repo list without prompting. Add "Affected repos auto-confirmed (autopilot): [list]" to the 1d gate assumptions list. |
+| `balanced` | Present the inferred list and BLOCK for explicit `confirm` / `add <repo>` / `remove <repo>` response (current behavior). |
+| `guided` | If the architect's justifications contain NO hedge language (e.g., "probably", "might", "unclear", "possibly") AND the inferred list has ≤5 repos: auto-confirm and add to assumptions. Otherwise: present the list and BLOCK for explicit confirmation. |
+| `manual` | Present the inferred list and BLOCK for explicit `confirm` / `add <repo>` / `remove <repo>` response. |
+
+**When confirmation is required**, present to the user:
 
 ```
 Detected affected repos:
@@ -951,6 +1140,22 @@ Parameters:
 
 ### 1d. Gate — spec and plan review
 
+**Construct the `assumptions` field before calling the gate:**
+
+The `assumptions` field is a markdown-formatted string listing every
+clarification decision the orchestrator made without explicit user input.
+Accumulate entries across Phase 1-syn, 1a, and 1a-ws:
+
+| `<autonomyLevel>` | What to accumulate |
+|-------------------|--------------------|
+| `autopilot` | All 8 clarification dimensions ("assumed from synthesis"), plus any workspace-repo auto-confirmations. One bullet per item. |
+| `guided` | Deferred dimensions 4–8 ("assumed from ticket text"), plus any workspace-repo auto-confirmations. |
+| `balanced` | Only inferred decisions the user did NOT explicitly correct during synthesis or 1a clarification. Typically empty or near-empty. |
+| `manual` | Only inferred decisions the user did NOT explicitly provide. Typically empty. |
+
+When nothing was inferred without user input, `assumptions` MAY be an empty
+string or contain only `"No assumptions made — every decision was user-directed."`.
+
 **Request human approval via the bosch MCP server:**
 
 Read the full text of all spec files in `specDir` and the execution plan,
@@ -963,7 +1168,8 @@ Call mcp__bosch__gate_request with:
   "payload": {
     "ticket": "<ticketKey>",
     "spec": "<full text of all BDD spec files from specDir, concatenated>",
-    "plan": "<full text of execution-plan.md>"
+    "plan": "<full text of execution-plan.md>",
+    "assumptions": "<markdown bullet list of inferred decisions, or empty string>"
   }
 }
 ```
@@ -1962,7 +2168,7 @@ and append `(sub-agent profiles overestimated; orchestrator cost absorbed)`.
 | Sonnet 4.6 | $3.75/MTok | $0.30/MTok | $15/MTok |
 | Haiku 4.5 | $1.25/MTok | $0.10/MTok | $5/MTok |
 
-> Actual total from session token log (includes all agent spawns). Phase 7 finalization (~$0.05–0.15) not included. Per-agent rows are profile estimates × actual spawn count.
+> Actual total from session token log (includes all agent spawns). Phase 7 finalization (~$0.05–0.15) not included. Phase 1-syn (stated synthesis) is orchestrator-driven — its cost is folded into the Orchestrator row. Per-agent rows are profile estimates × actual spawn count.
 ```
 
 **Step 5:** Post the comment:
@@ -2115,7 +2321,7 @@ Build the summary comment including time data and computed cost:
 | ... | ... | ... | ... | ... |
 | Orchestrator | — | Sonnet 4.6 | — | $<orchestrator_cost> |
 
-> Actual total from session token log (includes all agent spawns). Phase 7 finalization (~$0.05–0.15) not included. Per-agent rows are profile estimates × actual spawn count.
+> Actual total from session token log (includes all agent spawns). Phase 7 finalization (~$0.05–0.15) not included. Phase 1-syn (stated synthesis) is orchestrator-driven — its cost is folded into the Orchestrator row. Per-agent rows are profile estimates × actual spawn count.
 ```
 
 Post the comment via tr-agent:

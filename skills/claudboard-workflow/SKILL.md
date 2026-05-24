@@ -391,7 +391,7 @@ Record every resolved flag value and its evidence source for display in Phase 5.
 
 ## Phase 4: Substitution Resolution
 
-Resolve all 18 v1 substitution variables from the analysis report and runtime
+Resolve all substitution variables from the analysis report and runtime
 context. Load `references/substitution-catalog.md` for source fields, fallback
 rules, and example values.
 
@@ -425,6 +425,7 @@ For each variable:
 | `{{REPO_OR_SERVICE_LABEL}}` | "workspace" if WORKSPACE_MODE else "repo" |
 | `{{STACK_REMINDERS}}` | Report "Patterns detected" / "Preserve" section rendered as bullet list |
 | `{{REPOS_MAP_JSON}}` | Per-repo ADO repositoryId map; WORKSPACE_MODE only; see substitution-catalog |
+| `{{CLARIFY_AUTONOMY_DEFAULT}}` | `config.clarify.defaultAutonomy` from generated config; fallback `balanced` |
 
 **`{{STACK_REMINDERS}}` lift:** Read the "Preserve" bullets from the analysis
 report (the items under "Preserve:" in the quality assessment). Format as a
@@ -710,6 +711,8 @@ edited skill files should be updated to use the new names.
 
 [list any [TODO: ...] placeholders written to config.json with hints for where
 to find the correct values]
+
+Clarification autonomy default set to `{{CLARIFY_AUTONOMY_DEFAULT}}` (override per-invocation or edit `clarify.defaultAutonomy` in `config.json`).
 
 **Next steps:** Try `/start-feature` on a small ticket to validate the wiring.
 ```

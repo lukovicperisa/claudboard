@@ -74,6 +74,8 @@ skills/
 
 **Relationship to hand-edited copies:** The Bosch repos (craftsphere, MEAS repos) currently have hand-edited `feature-workflow/` skills. Those remain untouched — `/claudboard-refresh` skips `feature-workflow/` directories entirely. The generated skill is templated from those hand-edited copies, parameterized by claudboard analysis.
 
+**Autonomy lever and synthesis phase (v1):** Every generated `feature-workflow` includes a clarification autonomy prompt at workflow entry (four levels: `autopilot` / `balanced` / `guided` / `manual`) and a `### 1-syn. Stated synthesis` phase that fires before Clarify. The default autonomy level is set in `config.json` (`clarify.defaultAutonomy`, default `balanced`) and is resolved at generation time from `{{CLARIFY_AUTONOMY_DEFAULT}}` in the template.
+
 **Upgrade path caveat:** v1 has no upgrade path. If you need to regenerate, remove the directory manually and re-run `/claudboard-workflow`. This applies to both single-repo and workspace-mode generated skills.
 
 **Template source of truth:** `skills/claudboard-workflow/references/feature-workflow.template/` — fixing a bug here benefits all projects on their next regeneration.

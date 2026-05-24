@@ -521,6 +521,24 @@ REPO_GITHUB=false.
 
 ---
 
+## {{CLARIFY_AUTONOMY_DEFAULT}}
+
+**Token:** `{{CLARIFY_AUTONOMY_DEFAULT}}`
+
+**Source field in analysis report:** Not sourced from the analysis report —
+sourced from `config.clarify.defaultAutonomy` in the generated `config.json`
+at render time.
+
+**Fallback when unresolvable:** `balanced` (the static template default).
+
+**Example resolved value:** `balanced`
+
+**Used in:** `SKILL.md.template` (clarification autonomy prompt at workflow
+entry — "Clarification autonomy: {{CLARIFY_AUTONOMY_DEFAULT}} — accept [Enter]
+or override [a / b / c / d]?").
+
+---
+
 ## {{CIRCUIT_BREAKER_LIBRARY}}
 
 **Token:** `{{CIRCUIT_BREAKER_LIBRARY}}`
@@ -568,3 +586,4 @@ REPO_GITHUB=false.
 | `{{GITHUB_REPO}}` | REPO_GITHUB only | No (guarded by IF block) |
 | `{{GITHUB_LINKING_KEYWORD}}` | REPO_GITHUB only | No (default: "Closes") |
 | `{{CIRCUIT_BREAKER_LIBRARY}}` | CIRCUIT_BREAKER only | No (guarded by IF block) |
+| `{{CLARIFY_AUTONOMY_DEFAULT}}` | All modes | No (fallback: `balanced`) |
