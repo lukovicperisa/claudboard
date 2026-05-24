@@ -248,11 +248,23 @@ Add a comment to the ticket.
 
 INPUT CONTEXT will include: `ticketKey`, `commentBody`
 
+### Step 1: Normalize commentBody
+
+Before calling the MCP tool, apply exactly two substring replacements to `commentBody`, in this order:
+
+1. Replace every literal `</n>` substring with the empty string.
+2. Replace every literal `\n` (the two-character backslash-n sequence) with a real LF newline.
+
+These are exact substring matches — no regex, no escaping context. The operation is idempotent:
+when the input contains no `</n>` or literal `\n` sequences, the output equals the input.
+
+### Step 2: Post the comment
+
 ```
 Tool: mcp__bosch-jira-mcp__jira_add_comment
 Parameters:
   issue_key: <ticketKey>
-  comment: <commentBody — markdown formatted>
+  comment: <normalized commentBody — markdown formatted>
 ```
 
 ### Output
@@ -272,16 +284,16 @@ Parameters:
 This action is NOT SUPPORTED on TRACKER_TR.
 
 The Bosch T&R MCP (bosch-jira-mcp v1.0.0) does not expose a worklog tool.
-Time data is folded into the body of the Phase 7 final summary comment by the
-orchestrator — this agent should never be called for this action under
-TRACKER_TR.
+Time is not posted to Jira — neither via worklog nor folded into a comment.
+The cost comment posted by Phase 7b is the only Jira artifact produced by the workflow.
+This agent should never be called for this action under TRACKER_TR.
 
 ### Output (error)
 
 ```json
 {
   "action": "addWorklog",
-  "error": "Action addWorklog unavailable on TRACKER_TR — time is folded into Phase 7 final summary comment"
+  "error": "Action addWorklog unavailable on TRACKER_TR — time is not posted to Jira (neither via worklog nor folded into a comment)"
 }
 ```
 

@@ -717,8 +717,9 @@ jira_add_comment, jira_transition, jira_update_issue, jira_get_myself):
    is skipped; `sprintAssigned: false` is noted in the fetchAndPrepare result.
    Lifts when: `jira_update_issue` gains custom-field write support.
 
-3. **No worklog** — T&R MCP has no worklog tool. Refinement and implementation
-   time are folded into the Phase 7 final summary comment body instead.
+3. **No worklog** — T&R MCP has no worklog tool. Time is not posted to Jira —
+   neither via worklog nor folded into a comment. Only the Phase 7b cost
+   comment is posted.
    Lifts when: `jira_add_worklog` lands in bosch-jira-mcp.
 
 4. **AC inlined in description** — Acceptance Criteria are written under a

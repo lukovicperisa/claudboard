@@ -2044,25 +2044,6 @@ IMPL_SECONDS=$((IMPL_END - CHECKPOINT))
 
 Convert to JIRA time format (round to nearest 5 minutes). Then log it:
 
-<!-- IF WORKSPACE_MODE -->
-**Workspace mode:** The worklog comment should include a per-repo breakdown.
-Build the comment body from `affectedRepos` and `implementationOrder`:
-
-```
-Implementation work
-
-Repos touched (in implementation order):
-  1. common-dto   — [brief scope from plan slice]
-  2. datahandler  — [brief scope from plan slice]
-  3. controller   — [brief scope from plan slice]
-
-Recommended merge order: common-dto → datahandler → controller
-Rationale: <prMergeRationale>
-```
-
-Pass this as the `comment` field in the worklog action below.
-<!-- ENDIF -->
-
 ```
 Tool: Agent
 Parameters:
@@ -2135,41 +2116,51 @@ PYEOF
 
 Hold the printed `ACTUAL_TOTAL` value from the script output.
 
-**Step 3:** Build the per-phase/per-agent breakdown table from the SPAWN_LOG:
+**Step 3:** Compute per-phase cost estimates and orchestrator remainder from the SPAWN_LOG:
 
-For each phase/agent entry in the SPAWN_LOG, compute `spawns × mid-range profile cost`
-using the agent profiles from `claude-pricing.md`. Use the agent's model in the Model column.
+For each phase (1–6), sum `spawns × mid-range profile cost` across all agents logged for that
+phase using the agent profiles from `claude-pricing.md`. If a phase has no SPAWN_LOG entries,
+its estimate is `$0.00`. Format all dollar values to two decimal places.
 
-Then compute the orchestrator row:
-`orchestrator_cost = ACTUAL_TOTAL − Σ(all sub-agent row estimates)`
+```
+P1_COST = Σ(spawns × profile) for all phase-1 agents (or $0.00 if none)
+P2_COST = Σ(spawns × profile) for all phase-2 agents (or $0.00 if none)
+P3_COST = Σ(spawns × profile) for all phase-3 agents (or $0.00 if none)
+P4_COST = Σ(spawns × profile) for all phase-4 agents (or $0.00 if none)
+P5_COST = Σ(spawns × profile) for all phase-5 agents (or $0.00 if none)
+P6_COST = Σ(spawns × profile) for all phase-6 agents (or $0.00 if none)
+ORCH_COST = max(0, ACTUAL_TOTAL − (P1_COST + P2_COST + P3_COST + P4_COST + P5_COST + P6_COST))
+```
 
-If the result would be negative (profiles overestimated), set the orchestrator cost to `$0.00`
-and append `(sub-agent profiles overestimated; orchestrator cost absorbed)`.
+If `Σ(P1..P6) > ACTUAL_TOTAL` (profiles overestimated), set `ORCH_COST = $0.00` and hold a flag
+to append `(sub-agent profiles overestimated; orchestrator cost absorbed)` to the footnote.
 
-**Step 4:** Compose the JIRA comment using this structure:
+Determine ticket batch context: `TICKET_N` (this ticket's 1-based index in the batch) and
+`TICKET_TOTAL` (total tickets sharing this session). For a single-ticket run use `TICKET_N = 1`,
+`TICKET_TOTAL = 1`. Compute `SHARE = ACTUAL_TOTAL / TICKET_TOTAL` (formatted to two decimal places).
+
+**Step 4:** Compose the JIRA comment:
 
 ```markdown
 ## AI-Assisted Development — Cost Analysis
 
-**Actual session cost:** $<ACTUAL_TOTAL>
+**Session total:** $<ACTUAL_TOTAL>
+**This ticket's share:** $<SHARE> (<TICKET_N> of <TICKET_TOTAL>)
 
-### Per-Phase / Per-Agent Breakdown
+### Per-phase cost
 
-| Phase | Agent | Model | Spawns | Est. Cost |
-|-------|-------|-------|--------|-----------|
-| <phase> | <agent> | <model> | <N> | $<est> |
-| ... | ... | ... | ... | ... |
-| Orchestrator | — | Sonnet 4.6 | — | $<orchestrator_cost> |
+- Phase 1 — Spec + Plan: $<P1_COST>
+- Phase 2 — Branch: $<P2_COST>
+- Phase 3 — Implement: $<P3_COST>
+- Phase 4 — Commit: $<P4_COST>
+- Phase 5 — Review: $<P5_COST>
+- Phase 6 — PR: $<P6_COST>
+- Orchestrator: $<ORCH_COST>
 
-### Pricing Rates Used
-
-| Model | Input (cache-write) | Cache Hit | Output |
-|-------|-------------------|-----------|--------|
-| Sonnet 4.6 | $3.75/MTok | $0.30/MTok | $15/MTok |
-| Haiku 4.5 | $1.25/MTok | $0.10/MTok | $5/MTok |
-
-> Actual total from session token log (includes all agent spawns). Phase 7 finalization (~$0.05–0.15) not included. Phase 1-syn (stated synthesis) is orchestrator-driven — its cost is folded into the Orchestrator row. Per-agent rows are profile estimates × actual spawn count.
+> Estimated from session token log. Phase 7 finalization not included.
 ```
+
+(If ORCH_COST was clamped to $0.00, append ` (sub-agent profiles overestimated; orchestrator cost absorbed)` to the footnote.)
 
 **Step 5:** Post the comment:
 
@@ -2226,28 +2217,14 @@ After Phase 7 completes, tell the user:
 
 Call `mcp__bosch__phase_start` with `{ num: 7, title: "Finalize T&R" }`.
 
-After the PR is created, finalize the T&R ticket with a time summary comment
-and status transition. T&R has no worklog tool — time data is folded into
-the comment body.
+After the PR is created, finalize the T&R ticket with a cost analysis comment
+and status transition.
 
 Read the agent instructions from
 `.claude/skills/feature-workflow/agents/tr-agent.md` once and reuse for
 all T&R spawns in this phase.
 
-### 7a. Implementation time (T&R — no worklog)
-
-Calculate elapsed time since the checkpoint recorded after Phase 1d:
-
-```bash
-IMPL_END=$(date +%s)
-IMPL_SECONDS=$((IMPL_END - CHECKPOINT))
-IMPL_ELAPSED="<converted to human format — e.g., 2h 15m>"
-```
-
-Hold `IMPL_ELAPSED` and the previously held `REFINEMENT_ELAPSED` from Phase
-1d for inclusion in the Phase 7b comment body.
-
-### 7b. Summary comment (with time data)
+### 7b. Cost analysis comment
 
 Run the JSONL cost script to compute the actual session cost (reference `SESSION_JSONL_PATH` captured at Phase 1 kickoff):
 
@@ -2292,37 +2269,34 @@ else:
 PYEOF
 ```
 
-Hold the printed `ACTUAL_TOTAL` value. Build the per-phase/per-agent breakdown table from the SPAWN_LOG
-(same method as JIRA variant: spawns × mid-range profile, orchestrator row = `ACTUAL_TOTAL − Σ(sub_agent_estimates)`).
+Hold the printed `ACTUAL_TOTAL` value. Compute per-phase cost estimates and orchestrator remainder
+from the SPAWN_LOG (same method as JIRA path: spawns × mid-range profile per phase, orchestrator =
+`max(0, ACTUAL_TOTAL − Σphase_estimates)`).
 
-Build the summary comment including time data and computed cost:
+Determine `TICKET_N`, `TICKET_TOTAL`, and `SHARE` as in the JIRA path.
+
+Compose the cost comment (identical shape to the JIRA path):
 
 ```markdown
-## AI-Assisted Development — Summary
+## AI-Assisted Development — Cost Analysis
 
-**PR:** <prUrl>
-**Branch:** `<branch>`
+**Session total:** $<ACTUAL_TOTAL>
+**This ticket's share:** $<SHARE> (<TICKET_N> of <TICKET_TOTAL>)
 
-### Time breakdown (folded — T&R has no worklog tool)
+### Per-phase cost
 
-| Phase | Time |
-|-------|------|
-| Requirement refinement (Phase 1) | <REFINEMENT_ELAPSED> |
-| Implementation (Phases 2–6) | <IMPL_ELAPSED> |
-| **Total** | <sum> |
+- Phase 1 — Spec + Plan: $<P1_COST>
+- Phase 2 — Branch: $<P2_COST>
+- Phase 3 — Implement: $<P3_COST>
+- Phase 4 — Commit: $<P4_COST>
+- Phase 5 — Review: $<P5_COST>
+- Phase 6 — PR: $<P6_COST>
+- Orchestrator: $<ORCH_COST>
 
-### Cost Analysis
-
-**Actual session cost:** $<ACTUAL_TOTAL>
-
-| Phase | Agent | Model | Spawns | Est. Cost |
-|-------|-------|-------|--------|-----------|
-| <phase> | <agent> | <model> | <N> | $<est> |
-| ... | ... | ... | ... | ... |
-| Orchestrator | — | Sonnet 4.6 | — | $<orchestrator_cost> |
-
-> Actual total from session token log (includes all agent spawns). Phase 7 finalization (~$0.05–0.15) not included. Phase 1-syn (stated synthesis) is orchestrator-driven — its cost is folded into the Orchestrator row. Per-agent rows are profile estimates × actual spawn count.
+> Estimated from session token log. Phase 7 finalization not included.
 ```
+
+(If ORCH_COST was clamped to $0.00, append ` (sub-agent profiles overestimated; orchestrator cost absorbed)` to the footnote.)
 
 Post the comment via tr-agent:
 
@@ -2336,7 +2310,7 @@ Parameters:
     {
       "action": "addComment",
       "ticketKey": "<ticketKey>",
-      "commentBody": "<composed summary comment with time data>"
+      "commentBody": "<composed cost analysis comment>"
     }
   allowedTools:
     - mcp__bosch-jira-mcp__jira_add_comment
@@ -2370,7 +2344,7 @@ After Phase 7 completes, tell the user:
 - A brief summary of what was implemented
 - Test results (from the test summary built in Phase 3)
 - The actual session cost
-- T&R v1 reminder: time data was recorded in the ticket comment (not worklog)
+- T&R v1 reminder: no worklog (time is not posted to Jira — neither via worklog nor folded into a comment)
 - A reminder to request reviewers if needed
 <!-- ENDIF -->
 
@@ -2408,8 +2382,7 @@ After Phase 7 completes, tell the user:
 | 7c Transition | **jira-agent** (Haiku) | Move ticket to success state | — |
 <!-- ENDIF -->
 <!-- IF TRACKER_TR -->
-| 7a (hold time) | Main | Record IMPL_ELAPSED (no worklog on T&R) | — |
-| 7b Comment | **tr-agent** (Haiku) | Post time data + cost analysis in summary comment | — |
+| 7b Cost | **tr-agent** (Haiku) | Post cost analysis comment | — |
 | 7c Transition | **tr-agent** (Haiku) | Move ticket to success state | — |
 <!-- ENDIF -->
 

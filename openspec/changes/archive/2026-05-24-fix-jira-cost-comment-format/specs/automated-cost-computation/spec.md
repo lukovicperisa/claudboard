@@ -1,72 +1,7 @@
-## Requirements
-
-### Requirement: Locate session JSONL autonomously
-The system SHALL compute the session JSONL path using the `CLAUDE_CODE_SESSION_ID` environment variable and the current working directory, without any user input.
-
-Path formula: `~/.claude/projects/<cwd-with-slashes-replaced-by-dashes>/<CLAUDE_CODE_SESSION_ID>.jsonl`
-
-#### Scenario: JSONL found and readable
-- **WHEN** Phase 7b runs and `CLAUDE_CODE_SESSION_ID` is set
-- **THEN** the system reads the JSONL at the computed path without prompting the user
-
-#### Scenario: JSONL not found
-- **WHEN** the computed JSONL path does not exist
-- **THEN** the system outputs `Actual session cost: unavailable (session log not found)` and continues without blocking Phase 7b
-
----
-
-### Requirement: Compute actual total cost from JSONL
-The system SHALL sum all `usage` fields across every assistant turn in the session JSONL and apply per-model pricing to produce the actual total cost.
-
-Token fields to sum per turn: `input_tokens` (base input), `cache_creation.ephemeral_5m_input_tokens` (5-min cache write), `cache_creation.ephemeral_1h_input_tokens` (1-hour cache write), `cache_read_input_tokens` (cache read), `output_tokens`.
-
-Pricing rates (from `claude-pricing.md`):
-
-| Model | Base input | Cache write 5m | Cache write 1h | Cache read | Output |
-|-------|-----------|----------------|----------------|------------|--------|
-| Sonnet 4.6 | $3.00 | $3.75 | $6.00 | $0.30 | $15.00 |
-| Haiku 4.5  | $1.00 | $1.25 | $2.00 | $0.10 | $5.00  |
-| Opus 4.7   | $5.00 | $6.25 | $10.00 | $0.50 | $25.00 |
-
-Unknown model IDs SHALL fall back to Sonnet 4.6 rates.
-
-#### Scenario: Session with mixed models
-- **WHEN** the JSONL contains turns from both Sonnet 4.6 and Haiku 4.5
-- **THEN** costs are computed per model and summed to produce a single total
-
-#### Scenario: Malformed turn in JSONL
-- **WHEN** a line in the JSONL fails to parse or has no `usage` field
-- **THEN** that line is silently skipped; other turns are still counted
-
----
-
-### Requirement: Track spawn counts per phase during workflow execution
-The orchestrator SHALL maintain a running spawn-count memo updated at the end of each phase, recording the agent type and spawn count for that phase.
-
-Memo format (held in conversation context):
-```
-SPAWN_LOG:
-  phase1: jira-agent×1, sdd-expert×1, architect×1
-  phase2: git-agent×1
-  phase3: impl-agent×3 (baseline×1, CP×2)
-  phase4: git-agent×3
-  phase5: spec-reviewer×1, design-reviewer×1
-  phase6: pr-agent×1, git-agent×1
-```
-
-The JSONL path SHALL be recorded at Phase 1 kickoff (before any directory change) as `SESSION_JSONL_PATH` and referenced in Phase 7b.
-
-#### Scenario: Spawn count available at Phase 7b
-- **WHEN** Phase 7b runs after a complete workflow
-- **THEN** the orchestrator can read the SPAWN_LOG memo without scanning tool history
-
-#### Scenario: Partial workflow (phases not all completed)
-- **WHEN** some phases were skipped or not yet run
-- **THEN** missing phase entries in the SPAWN_LOG are treated as zero spawns for that phase
-
----
+## MODIFIED Requirements
 
 ### Requirement: Build per-phase/per-agent breakdown table
+
 The system SHALL build a per-phase cost summary as a flat bullet list using: Σ(spawn count × mid-range token profile) across all agents in that phase = estimated cost for that phase bullet. The orchestrator bullet SHALL equal `actual_total − Σ(all phase bullet estimates)`, ensuring the bullets sum to the actual total.
 
 The bullet set SHALL always include all of: Phase 1, Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, Orchestrator — even if a phase had zero spawns (in which case its bullet renders `$0.00`). Per-agent rows SHALL NOT be rendered in the comment.
@@ -83,9 +18,8 @@ The bullet set SHALL always include all of: Phase 1, Phase 2, Phase 3, Phase 4, 
 - **WHEN** Phase 5 had no agent spawns in this workflow run (SPAWN_LOG `phase5:` empty)
 - **THEN** the Phase 5 bullet still appears in the comment body as `- Phase 5 — Review: $0.00`
 
----
-
 ### Requirement: Post non-blocking cost comment
+
 The system SHALL compose the cost comment and post it to the tracker ticket without any user interaction. The `/cost` command SHALL NOT be mentioned as a requirement or prompt.
 
 The comment body SHALL be a flat-markdown shape composed of exactly these elements, in this order:

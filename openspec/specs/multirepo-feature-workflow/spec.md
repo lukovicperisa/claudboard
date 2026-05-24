@@ -138,18 +138,11 @@ The orchestrator SHALL NOT poll for PR merge status, SHALL NOT trigger artifact 
 - **WHEN** the pr-agent fails to create a PR for one repo (e.g., transient ADO error)
 - **THEN** the orchestrator SHALL report the failure for that repo, continue creating the remaining PRs, and present the final report listing successful PRs plus the failed repo with retry instructions
 
-### Requirement: Phase 7 — single-ticket worklog aggregation
-Phase 7 SHALL aggregate the work performed across all affected repos into worklog entries on a single Jira ticket. The orchestrator SHALL NOT create multiple Jira tickets for a multi-repo feature; one ticket spans the entire feature.
+### ~~Requirement: Phase 7 — single-ticket worklog aggregation~~ — REMOVED
 
-The aggregated worklog SHALL include: total time spent across all repos, a per-repo breakdown listing each repo and its commit/PR URL, and the recommended merge-order summary (so reviewers reading the ticket later have the merge guidance).
+**Reason**: The aggregated worklog body (per-repo PR URLs + merge-order summary folded into the Jira worklog comment) produced bloated, noisy entries in Jira's worklog log view, and duplicated information that already lives in the PR descriptions. The new policy is that Jira worklog comments are a fixed terse one-line label only (enforced by the `tracker-backends` capability's MODIFIED "Jira backend full-flow capability set" requirement) regardless of single-repo vs multi-repo mode.
 
-#### Scenario: Multi-repo worklog
-- **WHEN** Phase 7 runs after a 4-repo feature
-- **THEN** the jira-agent SHALL be invoked once with an aggregated worklog body listing all four repos and their PR URLs and the merge-order recommendation; SHALL NOT be invoked four times
-
-#### Scenario: Solo-repo worklog
-- **WHEN** Phase 7 runs after a 1-repo feature
-- **THEN** the jira-agent SHALL log a single-repo worklog identical in content to the existing single-repo workflow's worklog
+**Migration**: The single-ticket-per-feature invariant is preserved (the orchestrator still creates exactly one Jira ticket per feature, and that ticket still receives the worklog entries from Phase 1 and Phase 6/7). What changes is the worklog comment body: it is now `"Requirement refinement work"` (Phase 1) or `"Implementation work"` (Phase 6/7) in both single-repo and multi-repo runs. Per-repo PR URLs are accessible via the PR descriptions on the host (Azure DevOps / GitHub). The "Recommended merge order" remains in the orchestrator's final report to the user (see the existing "Phase 6 — parallel PR creation with merge-order recommendation" requirement) and SHALL NOT be re-posted into Jira. No data is lost; it simply lives in the appropriate surface.
 
 ### Requirement: Per-feature artifact placement
 Phase 1 outputs (`spec`, `plan.md`, per-repo `slices/<repo>.md`) SHALL be written to `<workspace>/.claude/changes/<TICKET>/`. Because `<workspace>/.claude` is a symlink to the meta-repo, these files SHALL be naturally version-controlled in the meta-repo and shareable across teammates working the same ticket.

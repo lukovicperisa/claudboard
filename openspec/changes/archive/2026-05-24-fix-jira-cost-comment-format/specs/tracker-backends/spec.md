@@ -25,23 +25,7 @@ The replacements SHALL be exact substring matches (no regex, no escaping context
 - **WHEN** `addComment` receives a `commentBody` containing `"foo\n</n>bar"`
 - **THEN** the agent first strips `</n>` to produce `"foo\nbar"`, then decodes `\n` to LF, yielding a body with a real newline between `foo` and `bar`
 
-### Requirement: Tracker-backend action contract
-
-The system SHALL define a fixed action contract that every supported tracker agent (`jira-agent.md`, `tr-agent.md`) implements. Agents receive an `action` field in INPUT CONTEXT and dispatch on it. The orchestrator SHALL call actions by name regardless of which backend is active.
-
-The v1 action set is: `create`, `fetchAndPrepare`, `updateDescription`, `addLabels`, `addComment`, `addWorklog`, `transition`.
-
-#### Scenario: Action dispatch by name
-- **WHEN** the orchestrator spawns a tracker agent with `action: "addComment"` and the backend is `TRACKER_JIRA`
-- **THEN** `jira-agent.md` SHALL handle the action via `mcp__atlassian__addCommentToJiraIssue`
-
-#### Scenario: Action dispatch on T&R
-- **WHEN** the orchestrator spawns a tracker agent with `action: "addComment"` and the backend is `TRACKER_TR`
-- **THEN** `tr-agent.md` SHALL handle the action via `mcp__bosch-jira-mcp__jira_add_comment`
-
-#### Scenario: Action unavailable on backend
-- **WHEN** the orchestrator invokes an action that the active backend does not support (e.g., `create` or `addWorklog` on `TRACKER_TR`)
-- **THEN** the agent SHALL emit a structured error result block with `error: "Action <name> unavailable on TRACKER_TR — see v1 limitations"` and SHALL NOT improvise by substituting a different MCP tool
+## MODIFIED Requirements
 
 ### Requirement: Jira backend full-flow capability set
 
@@ -110,50 +94,6 @@ The action-to-tool mapping for `TRACKER_TR` SHALL be:
 #### Scenario: Comment action on T&R applies defensive normalization
 - **WHEN** the orchestrator invokes `addComment` and `TRACKER_TR` is active
 - **THEN** `tr-agent.md` SHALL first apply the defensive newline normalization specified by the "Defensive newline normalization for addComment" requirement, then invoke `mcp__bosch-jira-mcp__jira_add_comment`
-
-### Requirement: Tracker selection in config.json
-
-The generated `config.json` SHALL include a top-level `tracker` discriminator key with value `"jira"` or `"tr"`. The corresponding backend-specific block (`jira` or `tr`) SHALL be present, and the other tracker backend's block SHALL be absent.
-
-#### Scenario: Jira-only config
-- **WHEN** `TRACKER_JIRA` is the active backend
-- **THEN** `config.json` SHALL contain `"tracker": "jira"`, a populated `"jira": { cloudId, projectKey, urlBase, customFields, transitions }` block, and no `"tr"` key
-
-#### Scenario: T&R-only config
-- **WHEN** `TRACKER_TR` is the active backend
-- **THEN** `config.json` SHALL contain `"tracker": "tr"`, a populated `"tr": { baseUrl, projectKey, transitions }` block (no `customFields` — T&R cannot write them, no `cloudId` — T&R uses bearer-token auth via the MCP's own config file), and no `"jira"` key
-
-#### Scenario: Neither tracker configured
-- **WHEN** neither `TRACKER_JIRA` nor `TRACKER_TR` is active (no tracker MCP detected)
-- **THEN** `config.json` SHALL omit the `tracker` key and both backend blocks; the generated `SKILL.md` SHALL have no tracker phases
-
-### Requirement: Tracker-agent file is verbatim and conditional
-
-Each tracker-agent file SHALL be written to `agents/<backend>-agent.md` verbatim from the template tree (no substitution required) and SHALL only be written when its corresponding capability flag is true. Both agents MUST NOT be present in the same generated workflow.
-
-#### Scenario: Jira agent written
-- **WHEN** `TRACKER_JIRA` is true
-- **THEN** `agents/jira-agent.md` SHALL be written verbatim and `agents/tr-agent.md` SHALL NOT be written
-
-#### Scenario: T&R agent written
-- **WHEN** `TRACKER_TR` is true
-- **THEN** `agents/tr-agent.md` SHALL be written verbatim and `agents/jira-agent.md` SHALL NOT be written
-
-#### Scenario: Neither tracker active
-- **WHEN** neither tracker flag is true
-- **THEN** neither `agents/jira-agent.md` nor `agents/tr-agent.md` SHALL be written
-
-### Requirement: T&R authentication and MCP server name convention
-
-The `tr-agent.md` SHALL assume the MCP server is registered under a name matching the detection keyword (`bosch-jira-mcp` is the canonical name; tool prefix `mcp__bosch-jira-mcp__*` is expected). Authentication is handled by the MCP itself reading a bearer token from `~/.config/bosch-jira-mcp/config.json`; the agent SHALL NOT pass or read credentials directly.
-
-#### Scenario: Canonical MCP server name
-- **WHEN** `tr-agent.md` invokes a tracker action
-- **THEN** every tool reference SHALL use the prefix `mcp__bosch-jira-mcp__<tool>` and the agent SHALL NOT attempt to discover the MCP server name at runtime
-
-#### Scenario: MCP auth failure surfaced
-- **WHEN** the underlying MCP returns an authentication error
-- **THEN** `tr-agent.md` SHALL emit an error result block including the MCP's error text and the remediation hint "Check `~/.config/bosch-jira-mcp/config.json` bearer token"
 
 ### Requirement: Documented v1 limitations on T&R
 

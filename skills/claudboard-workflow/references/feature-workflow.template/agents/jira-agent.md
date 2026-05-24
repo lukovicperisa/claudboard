@@ -386,9 +386,10 @@ Add a time-tracking worklog to the ticket.
 
 INPUT CONTEXT will include: `ticketKey`, `timeSpent`, `comment`
 
-The `comment` field is pre-composed by the orchestrator. In workspace
-(multi-repo) mode, the orchestrator builds a multi-repo breakdown as the
-comment body before calling this action — pass it through as-is.
+The `comment` field SHALL be a fixed terse single-line label — either `Requirement refinement work`
+(Phase 1 worklog) or `Implementation work` (Phase 6/7 worklog) — never a multi-line,
+multi-paragraph, or multi-repo aggregated body. The orchestrator is responsible for passing the
+correct label; the agent SHALL forward it verbatim.
 
 ```
 Tool: mcp__atlassian__addWorklogToJiraIssue
@@ -418,11 +419,23 @@ Add a comment to the ticket.
 
 INPUT CONTEXT will include: `ticketKey`, `commentBody`
 
+### Step 1: Normalize commentBody
+
+Before calling the MCP tool, apply exactly two substring replacements to `commentBody`, in this order:
+
+1. Replace every literal `</n>` substring with the empty string.
+2. Replace every literal `\n` (the two-character backslash-n sequence) with a real LF newline.
+
+These are exact substring matches — no regex, no escaping context. The operation is idempotent:
+when the input contains no `</n>` or literal `\n` sequences, the output equals the input.
+
+### Step 2: Post the comment
+
 ```
 Tool: mcp__atlassian__addCommentToJiraIssue
 issueIdOrKey: <ticketKey>
 cloudId: "<config:cloudId>"
-commentBody: <commentBody — markdown formatted>
+commentBody: <normalized commentBody>
 contentFormat: "markdown"
 ```
 
