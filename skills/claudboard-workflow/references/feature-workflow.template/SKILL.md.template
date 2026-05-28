@@ -383,12 +383,49 @@ error and halt.
 
 ---
 
+## Halt mechanics
+
+The Claude Code CLI pauses ONLY when the orchestrator (1) calls the harness pause tool
+or (2) ends its turn — meaning no further tool calls and no further text in the
+same response. Plain text output does NOT pause the CLI: the harness streams
+text and immediately allows the next tool call. **Every later instruction in
+this document using the words "prompt", "HALT", "wait for user", "halt and tell
+the user", "wait for guidance", or `proceed` MUST be interpreted under this
+rule.** When a phase says "halt" or "wait", that means: call the harness pause tool
+where the response is an option from a small fixed set, OR print the prompt
+and end the turn immediately. Do not call another tool, do not summarize, do
+not "continue while waiting".
+
+In `gate=mcp` mode, pauses are handled by `mcp__bosch__*` lifecycle calls. In `gate=interactive` mode, the pause tool is `AskUserQuestion`.
+
+---
+
 ## Clarification autonomy
 
 After configuration validation and before Phase 1-pre, prompt the user to
 choose a clarification autonomy level. Read `config.clarify.defaultAutonomy`
-from `config.json` (fallback `balanced` when the field is absent or invalid),
-then present:
+from `config.json` (fallback `balanced` when the field is absent or invalid).
+
+**If gate=mcp:** Call `mcp__bosch__clarify_request` with a single question: "Clarification autonomy" with options for each level (autopilot/balanced/guided/manual) and the config default pre-selected. The tool suspends until the user responds in the browser UI.
+
+**If gate=interactive:** Use `AskUserQuestion` with the question
+"Clarification autonomy: {{CLARIFY_AUTONOMY_DEFAULT}} — accept default or override?"
+and options:
+
+- `Accept default ({{CLARIFY_AUTONOMY_DEFAULT}})`
+- `a — autopilot`
+- `b — balanced`
+- `c — guided`
+- `d — manual`
+
+This is the primary mechanism — it is the only harness-enforced way to
+pause for an enumerated choice.
+
+**If `AskUserQuestion` is unavailable in the current context** (e.g., the
+orchestrator is running under a sub-agent that does not expose it), print
+the prompt line below verbatim and **end the turn immediately** — do not
+call another tool, do not summarize, do not continue until the user has
+replied. Text alone does NOT pause the CLI; see "Halt mechanics" above.
 
 ```
 Clarification autonomy: {{CLARIFY_AUTONOMY_DEFAULT}} — accept [Enter] or override [a / b / c / d]?
@@ -402,7 +439,7 @@ the entire workflow. Valid values and their one-letter codes:
 | `a` | `autopilot` | Skip Clarify (1a) entirely. Synthesis (1-syn) prints but does NOT block. Affected-repos auto-confirmed (workspace). All clarification dimensions accumulated as assumptions for the 1d gate. |
 | `b` | `balanced` | 8-dimension enumeration rubric in 1a. Every `unclear` dimension becomes a question. Synthesis blocks for confirmation. |
 | `c` | `guided` | 3-dimension direction-only rubric in 1a. Synthesis blocks for confirmation. Dimensions 4–8 deferred as gate assumptions. |
-| `d` | `manual` | Free-form chat clarification in 1a; continues only when user types `proceed`. Synthesis blocks for confirmation. |
+| `d` | `manual` | Free-form chat clarification in 1a; after each question batch the orchestrator MUST end the turn and wait — `proceed` is only reachable when the orchestrator has stopped calling tools (see "Halt mechanics"). Synthesis blocks for confirmation. |
 
 **After the user responds**, print a one-line summary of the resolved level:
 
@@ -427,9 +464,27 @@ fires regardless of autonomy level.
 
 ---
 
+## Gate mode
+
+Parse `--gate=<mode>` from the invocation message at workflow start (alongside `--autonomy`). Default: `interactive`.
+
+| Mode | Gates | Clarification | Phase/Agent/Checkpoint lifecycle | Halts |
+|------|-------|---------------|----------------------------------|-------|
+| `mcp` | `mcp__bosch__gate_request` | `mcp__bosch__clarify_request` | `mcp__bosch__phase_start`, `phase_complete`, `agent_start`, `agent_complete`, `checkpoint_start`, `checkpoint_complete` | No halts — MCP tools suspend and resume the agent |
+| `interactive` | `AskUserQuestion` / end-of-turn | `AskUserQuestion` | Omitted — no consumer for lifecycle signals | `AskUserQuestion` or end-of-turn |
+
+**Hard contract — this is not a preference:**
+
+- In `mcp` mode: NEVER use `AskUserQuestion`. NEVER end a turn to wait for user input. ALL gates and lifecycle signals go through `mcp__bosch__*` tools.
+- In `interactive` mode: NEVER call any `mcp__bosch__*` tool. They do not exist in this environment.
+
+Hold the resolved mode as `<gateMode>` throughout the entire workflow — resolved once at invocation, never re-parsed.
+
+---
+
 ## Phase 1: Ticket, clarify, specify, and plan
 
-Call `mcp__bosch__phase_start` with `{ num: 1, title: "Ticket · Clarify · Specify · Plan" }`.
+**If gate=mcp:** Call `mcp__bosch__phase_start` with `{ num: 1, title: "Ticket · Clarify · Specify · Plan" }`.
 
 This phase creates the JIRA ticket immediately, then produces two
 deliverables before any code is written: a complete BDD specification and
@@ -690,7 +745,9 @@ Tell the user the ticket URL, then proceed to 1a.
 **Path B — no ticket provided (T&R):**
 
 Auto-create is not available on TRACKER_TR. The bosch-jira-mcp v1 does not
-expose an issue-creation tool. Halt immediately and tell the user:
+expose an issue-creation tool. Halt immediately and tell the user — print
+the block below and **end the turn** (do not call another tool until the
+user provides a ticket key; see "Halt mechanics"):
 
 ```
 Auto-create ticket unavailable on T&R — Path A (existing ticket key) is
@@ -741,6 +798,14 @@ Emit a user-facing block with:
 | `balanced` | Print synthesis, then HALT. Wait for user to respond with `confirm` or `correct: <feedback>`. |
 | `guided` | Print synthesis, then HALT. For multi-ticket input, the blocking confirmation MUST cover BOTH the prose summary AND the proposed slicing in a single exchange — slicing is a direction-level decision and is NOT auto-accepted in guided mode. |
 | `manual` | Print synthesis, then HALT. Wait for user `confirm` or `correct: <feedback>`. |
+
+**HALT means: end the turn immediately after printing the synthesis.** Do
+not call any further tool until the user replies with `confirm` or
+`correct: <feedback>`. The CLI does not pause on plain text — only
+the harness pause tool or end-of-turn returns control. See "Halt mechanics"
+and "Gate mode" near the top of this document. This rule applies to every `HALT` /
+`Wait for user` row in the table above and to every later "wait for user"
+point in this workflow.
 
 **Correction loop (balanced / guided / manual):**
 
@@ -1022,7 +1087,7 @@ Read the agent instructions from
 `.claude/skills/feature-workflow/agents/sdd-expert-agent.md`, then spawn
 the agent:
 
-Call `mcp__bosch__agent_start` with `{ name: "sdd-expert-agent", op: "write BDD spec" }`.
+**If gate=mcp:** Call `mcp__bosch__agent_start` with `{ name: "sdd-expert-agent", op: "write BDD spec" }`.
 
 ```
 Tool: Agent
@@ -1041,7 +1106,7 @@ Parameters:
     }
 ```
 
-Call `mcp__bosch__agent_complete` with `{ name: "sdd-expert-agent" }`.
+**If gate=mcp:** Call `mcp__bosch__agent_complete` with `{ name: "sdd-expert-agent" }`.
 
 The agent will emit a JSON result block. Extract and hold for Phase 1c:
 
@@ -1069,7 +1134,7 @@ Read the agent instructions from
 `.claude/skills/feature-workflow/agents/architect-agent.md`, then spawn
 the agent:
 
-Call `mcp__bosch__agent_start` with `{ name: "architect-agent", op: "write execution plan" }`.
+**If gate=mcp:** Call `mcp__bosch__agent_start` with `{ name: "architect-agent", op: "write execution plan" }`.
 
 ```
 Tool: Agent
@@ -1086,7 +1151,7 @@ Parameters:
     }
 ```
 
-Call `mcp__bosch__agent_complete` with `{ name: "architect-agent" }`.
+**If gate=mcp:** Call `mcp__bosch__agent_complete` with `{ name: "architect-agent" }`.
 
 The agent will emit a JSON result block:
 
@@ -1156,13 +1221,13 @@ Accumulate entries across Phase 1-syn, 1a, and 1a-ws:
 When nothing was inferred without user input, `assumptions` MAY be an empty
 string or contain only `"No assumptions made — every decision was user-directed."`.
 
-**Request human approval via the bosch MCP server:**
+**Request human approval:**
 
-Read the full text of all spec files in `specDir` and the execution plan,
-then call the gate tool:
+Read the full text of all spec files in `specDir` and the execution plan.
+
+**If gate=mcp:** Call `mcp__bosch__gate_request` with:
 
 ```
-Call mcp__bosch__gate_request with:
 {
   "kind": "spec+plan",
   "payload": {
@@ -1174,14 +1239,19 @@ Call mcp__bosch__gate_request with:
 }
 ```
 
-The `gate_request` tool suspends the workflow and delivers the spec + plan to
-the bosch web UI for human review. It returns only when the user resolves the gate.
+The tool suspends the workflow and delivers the spec + plan to the bosch web UI
+for human review. It returns only when the user resolves the gate.
+
+**If gate=interactive:** Present the spec and plan summary to the user. Use
+`AskUserQuestion` with options: "Approve", "Revise". If `AskUserQuestion` is
+unavailable, print the summary and end the turn — wait for the user to respond
+with `approve` or specific revision feedback.
 
 **Branch on the gate result:**
 
-**If result is `"approved"`:** proceed to time-logging below, then Phase 2.
+**If result is `"approved"` (or user responds `approve` in interactive mode):** proceed to time-logging below, then Phase 2.
 
-**If result is `{ status: "rejected", changes: "<feedback>" }`:**
+**If result is `{ status: "rejected", changes: "<feedback>" }` (gate=mcp) or user requests revisions (gate=interactive):**
 
 1. Re-invoke sdd-expert-agent with the change request injected as additional context:
 
@@ -1230,8 +1300,10 @@ the bosch web UI for human review. It returns only when the user resolves the ga
        - Bash
    ```
 
-3. Re-issue `mcp__bosch__gate_request` with the updated spec and plan payload.
-   Repeat the reject-branch loop until the result is `"approved"`.
+3. Re-issue the gate:
+   - **If gate=mcp:** Call `mcp__bosch__gate_request` with the updated spec and plan payload.
+   - **If gate=interactive:** Re-present the updated spec and plan via `AskUserQuestion` (or end-of-turn if unavailable).
+   Repeat the reject-branch loop until the result is `"approved"` (or user approves).
 
 **After the gate is approved**, log the requirement refinement work and record
 the checkpoint timestamp before proceeding autonomously.
@@ -1289,7 +1361,7 @@ a time-tracking record — just in the comment, not a separate worklog entry.
 
 Once confirmed, execute Phases 2–7 autonomously without pausing.
 
-Call `mcp__bosch__phase_complete` with `{ num: 1 }`.
+**If gate=mcp:** Call `mcp__bosch__phase_complete` with `{ num: 1 }`.
 
 Record Phase 1 spawn counts in the SPAWN_LOG context memo:
 
@@ -1310,7 +1382,7 @@ SPAWN_LOG:
 
 ## Phase 2: Create branch
 
-Call `mcp__bosch__phase_start` with `{ num: 2, title: "Create Branch" }`.
+**If gate=mcp:** Call `mcp__bosch__phase_start` with `{ num: 2, title: "Create Branch" }`.
 
 <!-- IF WORKSPACE_MODE -->
 **Workspace mode:** Create the same branch in every affected repo. The branch
@@ -1339,7 +1411,7 @@ Delegate to the git sub-agent. Read the agent instructions from
 `.claude/skills/feature-workflow/agents/git-agent.md`, then spawn
 the agent:
 
-Call `mcp__bosch__agent_start` with `{ name: "git-agent", op: "create-branch" }`.
+**If gate=mcp:** Call `mcp__bosch__agent_start` with `{ name: "git-agent", op: "create-branch" }`.
 
 ```
 Tool: Agent
@@ -1356,7 +1428,7 @@ Parameters:
     - Bash
 ```
 
-Call `mcp__bosch__agent_complete` with `{ name: "git-agent" }`.
+**If gate=mcp:** Call `mcp__bosch__agent_complete` with `{ name: "git-agent" }`.
 
 The agent will emit a JSON result block:
 
@@ -1367,7 +1439,7 @@ The agent will emit a JSON result block:
 }
 ```
 
-Call `mcp__bosch__phase_complete` with `{ num: 2 }`.
+**If gate=mcp:** Call `mcp__bosch__phase_complete` with `{ num: 2 }`.
 
 Append to the SPAWN_LOG:
 ```
@@ -1378,7 +1450,7 @@ Append to the SPAWN_LOG:
 
 ## Phase 3: Develop and test
 
-Call `mcp__bosch__phase_start` with `{ num: 3, title: "Develop and Test" }`.
+**If gate=mcp:** Call `mcp__bosch__phase_start` with `{ num: 3, title: "Develop and Test" }`.
 
 <!-- IF WORKSPACE_MODE -->
 **Workspace mode:** Develop each affected repo in `implementationOrder`. For
@@ -1403,14 +1475,14 @@ reuse for all spawns in this phase.
 
 ### 3a. Baseline and checkpoint 1 — in parallel
 
-Call `mcp__bosch__checkpoint_start` with `{ num: 0, title: "Baseline Verification" }`.
+**If gate=mcp:** Call `mcp__bosch__checkpoint_start` with `{ num: 0, title: "Baseline Verification" }`.
 
 Launch both the baseline verification and checkpoint 1 simultaneously.
 Send them in a **single message with two Agent tool calls**, both with
 `run_in_background: true`:
 
-Call `mcp__bosch__agent_start` with `{ name: "implementation-agent", op: "baseline" }` before the baseline spawn.
-Call `mcp__bosch__agent_start` with `{ name: "implementation-agent", op: "checkpoint 1" }` before the checkpoint 1 spawn.
+**If gate=mcp:** Call `mcp__bosch__agent_start` with `{ name: "implementation-agent", op: "baseline" }` before the baseline spawn.
+**If gate=mcp:** Call `mcp__bosch__agent_start` with `{ name: "implementation-agent", op: "checkpoint 1" }` before the checkpoint 1 spawn.
 
 ```
 Tool: Agent  (run_in_background: true)
@@ -1453,7 +1525,7 @@ Parameters:
     - Bash
 ```
 
-After each completes: call `mcp__bosch__agent_complete` with `{ name: "implementation-agent" }`.
+After each completes: **if gate=mcp:** call `mcp__bosch__agent_complete` with `{ name: "implementation-agent" }`.
 
 Wait for both to complete.
 
@@ -1464,16 +1536,16 @@ fix the issues before re-invoking the workflow. Any checkpoint 1 work
 done in parallel is discarded — the branch can be deleted and recreated.
 Do NOT proceed with further checkpoints.
 
-**If baseline passes:** Call `mcp__bosch__checkpoint_complete` with `{ num: 0 }`.
+**If baseline passes:** **if gate=mcp:** Call `mcp__bosch__checkpoint_complete` with `{ num: 0 }`.
 Continue with checkpoint 1's result. If checkpoint 1
-also completed successfully, call `mcp__bosch__checkpoint_complete` with `{ num: 1 }` and proceed to checkpoint 2. If checkpoint 1 hit a
+also completed successfully, **if gate=mcp:** call `mcp__bosch__checkpoint_complete` with `{ num: 1 }` and proceed to checkpoint 2. If checkpoint 1 hit a
 blocker, present it to the user.
 
 ### 3b. Remaining checkpoints
 
 For each remaining checkpoint (2 to N) in the execution plan:
-1. Call `mcp__bosch__checkpoint_start` with `{ num: N, title: "<checkpoint title from plan>" }`.
-2. Call `mcp__bosch__agent_start` with `{ name: "implementation-agent", op: "checkpoint N" }`.
+1. **If gate=mcp:** Call `mcp__bosch__checkpoint_start` with `{ num: N, title: "<checkpoint title from plan>" }`.
+2. **If gate=mcp:** Call `mcp__bosch__agent_start` with `{ name: "implementation-agent", op: "checkpoint N" }`.
 3. Spawn the implementation-agent sequentially:
 
 ```
@@ -1498,13 +1570,14 @@ Parameters:
     - Bash
 ```
 
-4. After it returns: call `mcp__bosch__agent_complete` with `{ name: "implementation-agent" }`.
+4. After it returns: **if gate=mcp:** call `mcp__bosch__agent_complete` with `{ name: "implementation-agent" }`.
 
 **If `completed` is `false`:** the agent hit a blocker. Present the
-`blocker` description to the user and wait for guidance before retrying
-or proceeding.
+`blocker` description to the user and **end the turn** — wait for the
+user's guidance before retrying or proceeding (no further tool calls in
+the same response; see "Halt mechanics").
 
-**After each checkpoint completes successfully:** call `mcp__bosch__checkpoint_complete`
+**After each checkpoint completes successfully:** **if gate=mcp:** call `mcp__bosch__checkpoint_complete`
 with `{ num: N }`.
 
 **After each checkpoint:** aggregate `testsRun`, `testsPassed`, and
@@ -1514,7 +1587,7 @@ summary is passed to the PR agent in Phase 6.
 Only proceed to Phase 4 when **all checkpoints are complete** and every
 scenario in the BDD spec is satisfied.
 
-Call `mcp__bosch__phase_complete` with `{ num: 3 }`.
+**If gate=mcp:** Call `mcp__bosch__phase_complete` with `{ num: 3 }`.
 
 Append to the SPAWN_LOG with actual spawn counts:
 ```
@@ -1533,7 +1606,7 @@ top-level error handler and do NOT touch the Jira ticket status.
 
 ## Phase 4: Commit
 
-Call `mcp__bosch__phase_start` with `{ num: 4, title: "Commit" }`.
+**If gate=mcp:** Call `mcp__bosch__phase_start` with `{ num: 4, title: "Commit" }`.
 
 <!-- IF WORKSPACE_MODE -->
 **Workspace mode:** Commit each affected repo independently. For each `repo`
@@ -1676,7 +1749,7 @@ Parameters:
 After committing, collect the final commit message (first line + body) — you
 will pass this to the PR agent in Phase 6.
 
-Call `mcp__bosch__phase_complete` with `{ num: 4 }`.
+**If gate=mcp:** Call `mcp__bosch__phase_complete` with `{ num: 4 }`.
 
 Append to the SPAWN_LOG with actual spawn counts:
 ```
@@ -1688,7 +1761,7 @@ where N is the actual number of git-agent spawns used for committing.
 
 ## Phase 5: Review
 
-Call `mcp__bosch__phase_start` with `{ num: 5, title: "Review" }`.
+**If gate=mcp:** Call `mcp__bosch__phase_start` with `{ num: 5, title: "Review" }`.
 
 <!-- IF WORKSPACE_MODE -->
 **Workspace mode:** Run both review gates for each affected repo. For each
@@ -1724,7 +1797,7 @@ Parameters:
 Then spawn the spec-reviewer. Read agent instructions from
 `.claude/skills/feature-workflow/agents/spec-reviewer.md`:
 
-Call `mcp__bosch__agent_start` with `{ name: "spec-reviewer", op: "verify BDD spec coverage" }`.
+**If gate=mcp:** Call `mcp__bosch__agent_start` with `{ name: "spec-reviewer", op: "verify BDD spec coverage" }`.
 
 ```
 Tool: Agent
@@ -1744,7 +1817,7 @@ Parameters:
     - Bash
 ```
 
-Call `mcp__bosch__agent_complete` with `{ name: "spec-reviewer" }`.
+**If gate=mcp:** Call `mcp__bosch__agent_complete` with `{ name: "spec-reviewer" }`.
 
 **If `passed` is `false`** (Critical findings):
 
@@ -1794,12 +1867,12 @@ user and ask for guidance.
 
 ### 5b. Design review
 
-Call `mcp__bosch__checkpoint_start` with `{ num: 52, title: "Design Review" }`.
+**If gate=mcp:** Call `mcp__bosch__checkpoint_start` with `{ num: 52, title: "Design Review" }`.
 
 Spawn the design-reviewer. Read agent instructions from
 `.claude/skills/feature-workflow/agents/design-reviewer.md`:
 
-Call `mcp__bosch__agent_start` with `{ name: "design-reviewer", op: "verify code quality" }`.
+**If gate=mcp:** Call `mcp__bosch__agent_start` with `{ name: "design-reviewer", op: "verify code quality" }`.
 
 ```
 Tool: Agent
@@ -1818,14 +1891,14 @@ Parameters:
     - Bash
 ```
 
-Call `mcp__bosch__agent_complete` with `{ name: "design-reviewer" }`.
+**If gate=mcp:** Call `mcp__bosch__agent_complete` with `{ name: "design-reviewer" }`.
 
 **If `passed` is `false`** (Critical findings): follow the same
 fix → amend → re-review loop as 5a, using `"reviewerType": "design"`.
 
-Call `mcp__bosch__checkpoint_complete` with `{ num: 52 }`.
+**If gate=mcp:** Call `mcp__bosch__checkpoint_complete` with `{ num: 52 }`.
 
-Call `mcp__bosch__phase_complete` with `{ num: 5 }`.
+**If gate=mcp:** Call `mcp__bosch__phase_complete` with `{ num: 5 }`.
 
 Append to the SPAWN_LOG with actual spawn counts:
 ```
@@ -1838,7 +1911,7 @@ where N is the actual number of spawns (0 if that reviewer was skipped).
 <!-- IF REPO_ADO -->
 ## Phase 6: PR creation
 
-Call `mcp__bosch__phase_start` with `{ num: 6, title: "PR Creation" }`.
+**If gate=mcp:** Call `mcp__bosch__phase_start` with `{ num: 6, title: "PR Creation" }`.
 
 <!-- IF WORKSPACE_MODE -->
 **Workspace mode:** Validate, push, and create PRs for all affected repos in
@@ -1913,7 +1986,7 @@ Parameters:
 Delegate to the PR sub-agent. Read the agent instructions from
 `.claude/skills/feature-workflow/agents/pr-agent-ado.md`:
 
-Call `mcp__bosch__agent_start` with `{ name: "pr-agent-ado", op: "create pull request" }`.
+**If gate=mcp:** Call `mcp__bosch__agent_start` with `{ name: "pr-agent-ado", op: "create pull request" }`.
 
 ```
 Tool: Agent
@@ -1936,11 +2009,11 @@ Parameters:
     - mcp__azure-devops__repo_create_pull_request
 ```
 
-Call `mcp__bosch__agent_complete` with `{ name: "pr-agent-ado" }`.
+**If gate=mcp:** Call `mcp__bosch__agent_complete` with `{ name: "pr-agent-ado" }`.
 
 The agent will emit a JSON result block. Extract `prUrl` and tell the user.
 
-Call `mcp__bosch__phase_complete` with `{ num: 6 }`.
+**If gate=mcp:** Call `mcp__bosch__phase_complete` with `{ num: 6 }`.
 
 Append to the SPAWN_LOG:
 ```
@@ -1954,7 +2027,7 @@ In workspace mode with multiple repos, use the actual PR and git-agent spawn cou
 <!-- IF REPO_GITHUB -->
 ## Phase 6: PR creation (GitHub)
 
-Call `mcp__bosch__phase_start` with `{ num: 6, title: "PR Creation" }`.
+**If gate=mcp:** Call `mcp__bosch__phase_start` with `{ num: 6, title: "PR Creation" }`.
 
 <!-- IF WORKSPACE_MODE -->
 **Workspace mode:** Validate, push, and create PRs for all affected repos in
@@ -1979,7 +2052,7 @@ Spawn the git-agent to validate PR readiness and sync-and-push (same as ADO).
 Delegate to the GitHub PR sub-agent. Read the agent instructions from
 `.claude/skills/feature-workflow/agents/pr-agent-github.md`:
 
-Call `mcp__bosch__agent_start` with `{ name: "pr-agent-github", op: "create pull request" }`.
+**If gate=mcp:** Call `mcp__bosch__agent_start` with `{ name: "pr-agent-github", op: "create pull request" }`.
 
 ```
 Tool: Agent
@@ -2005,11 +2078,11 @@ Parameters:
     - mcp__github__list_workflow_runs
 ```
 
-Call `mcp__bosch__agent_complete` with `{ name: "pr-agent-github" }`.
+**If gate=mcp:** Call `mcp__bosch__agent_complete` with `{ name: "pr-agent-github" }`.
 
 The agent will emit a JSON result block. Extract `prUrl` and tell the user.
 
-Call `mcp__bosch__phase_complete` with `{ num: 6 }`.
+**If gate=mcp:** Call `mcp__bosch__phase_complete` with `{ num: 6 }`.
 
 Append to the SPAWN_LOG:
 ```
@@ -2023,7 +2096,7 @@ In workspace mode with multiple repos, use the actual PR and git-agent spawn cou
 <!-- IF TRACKER_JIRA -->
 ## Phase 7: Finalize JIRA
 
-Call `mcp__bosch__phase_start` with `{ num: 7, title: "Finalize JIRA" }`.
+**If gate=mcp:** Call `mcp__bosch__phase_start` with `{ num: 7, title: "Finalize JIRA" }`.
 
 After the PR is created, finalize the JIRA ticket with work logging, cost
 analysis, and status transition. All operations are delegated to the
@@ -2199,7 +2272,7 @@ Parameters:
     - mcp__atlassian__transitionJiraIssue
 ```
 
-Call `mcp__bosch__phase_complete` with `{ num: 7 }`.
+**If gate=mcp:** Call `mcp__bosch__phase_complete` with `{ num: 7 }`.
 
 ### Final report to user
 
@@ -2215,7 +2288,7 @@ After Phase 7 completes, tell the user:
 <!-- IF TRACKER_TR -->
 ## Phase 7: Finalize T&R
 
-Call `mcp__bosch__phase_start` with `{ num: 7, title: "Finalize T&R" }`.
+**If gate=mcp:** Call `mcp__bosch__phase_start` with `{ num: 7, title: "Finalize T&R" }`.
 
 After the PR is created, finalize the T&R ticket with a cost analysis comment
 and status transition.
@@ -2334,7 +2407,7 @@ Parameters:
     - mcp__bosch-jira-mcp__jira_transition
 ```
 
-Call `mcp__bosch__phase_complete` with `{ num: 7 }`.
+**If gate=mcp:** Call `mcp__bosch__phase_complete` with `{ num: 7 }`.
 
 ### Final report to user
 

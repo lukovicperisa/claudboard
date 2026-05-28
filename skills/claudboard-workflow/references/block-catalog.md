@@ -564,3 +564,26 @@ in a generated workflow. The orchestrator enforces this at generation time:
 **Backward-compat note:** Flags sourced from `architectural_patterns` subsection default to `false` when the subsection is absent (old-schema reports). `claudboard-workflow` emits a single warning when any pattern-derived flag would have resolved from an absent subsection:
 
 > "Architectural patterns subsection absent — SAGA, CQRS, OUTBOX, CIRCUIT_BREAKER flags defaulted to false. Re-run `/analyse` to enable pattern-based blocks."
+
+---
+
+## Runtime Flags (not capability flags)
+
+Runtime flags are parsed from the invocation message at workflow start. They are **NOT** resolved at generation time and do **NOT** use `<!-- IF -->` blocks. Both execution paths appear in the rendered SKILL.md; the agent follows the path matching the parsed flag.
+
+### --gate
+
+**Values:** `mcp` (orchestrated by bosch-sdlc), `interactive` (standalone CLI — default when flag is absent)
+
+**Parsed from:** The invocation message at workflow entry, e.g. `"Start feature --gate=mcp: ..."`. Same parsing point as `--autonomy`.
+
+**Effect:**
+
+| Mode | Gates & approval | Clarification | Phase/Agent/Checkpoint lifecycle |
+|------|-----------------|---------------|----------------------------------|
+| `mcp` | `mcp__bosch__gate_request` | `mcp__bosch__clarify_request` | `mcp__bosch__phase_start/complete`, `agent_start/complete`, `checkpoint_start/complete` |
+| `interactive` | `AskUserQuestion` / end-of-turn | `AskUserQuestion` | Omitted — no consumer |
+
+**Set by:** bosch-sdlc prompt builder (always injects `--gate=mcp`). CLI users omit the flag (defaults to `interactive`).
+
+**Hard contract:** In `mcp` mode the agent NEVER calls `AskUserQuestion`. In `interactive` mode the agent NEVER calls any `mcp__bosch__*` tool. Violating the contract is an error.
