@@ -20,7 +20,7 @@ It also identifies good patterns to preserve, anti-patterns to avoid, and tech d
 ## Installation
 
 ```bash
-claude plugin install github:LUP1BG/claudboard
+claude plugin install github:lukovicperisa/claudboard
 ```
 
 Or add manually: clone this repo, then reference the `skills/claudboard/` directory.
@@ -46,6 +46,9 @@ Additional commands:
 
 - **`/refresh`** — Delta updates for projects that already have `.claude/` artifacts
 - **`/techdebt`** — Deep tech debt analysis with module-grouped, ticket-ready reports
+- **`/claudboard-workflow`** — Generates a complete `.claude/skills/feature-workflow/` skill into any project (opt-in, run after `/generate`)
+- **`/claudboard-workspace-init`** — Bootstrap a workspace meta-repo for multi-repo workspaces (run once by the first developer)
+- **`/claudboard-workspace-link`** — Teammate bootstrap: clones the workspace meta-repo and wires up the symlink
 
 ## Lifecycle
 
@@ -135,6 +138,9 @@ Every claudboard run upholds these contracts:
 - `skills/claudboard-generate/` — Artifact generation from analysis report
 - `skills/claudboard-refresh/` — Delta updates for existing projects
 - `skills/claudboard-techdebt/` — Deep tech debt analysis
+- `skills/claudboard-workflow/` — Generates feature-workflow skill into target projects
+- `skills/claudboard-workspace-init/` — Bootstrap workspace meta-repo + symlink
+- `skills/claudboard-workspace-link/` — Teammate bootstrap: clone meta-repo + create symlink
 - `openspec/` — OpenSpec change tracking for development workflow (specs for planned features)
 - `evals/` — Evaluation test cases across diverse repo types
 
