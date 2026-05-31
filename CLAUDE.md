@@ -27,7 +27,19 @@ skills/
 │       ├── claude-md-template.md     # CLAUDE.md generation template
 │       ├── rule-templates.md         # Rule file templates per language
 │       └── skill-generation.md       # Full-scope skill generation guide
-├── claudboard-analyse/SKILL.md       # Discovery & analysis (read-only, saves report)
+├── claudboard-analyse/
+│   ├── SKILL.md                      # Discovery & analysis (read-only, saves report)
+│   └── scripts/
+│       ├── discover.sh               # Runs Phase 1b/1c/1g in one bash invocation; emits JSON v1
+│       ├── schema/discover-v1.md     # v1 JSON schema: fields, semantics, schema-bump procedure
+│       └── lang/                     # Per-language grep packs (sourced by discover.sh)
+│           ├── _common.sh            # Shared: file count, language detect, ref_load_signals
+│           ├── java.sh               # Java/Kotlin triggers, anti-patterns, conventions
+│           ├── typescript.sh         # TypeScript/JavaScript triggers, anti-patterns
+│           ├── python.sh             # Python triggers, anti-patterns
+│           ├── go.sh                 # Go triggers, anti-patterns
+│           ├── rust.sh               # Rust triggers, anti-patterns
+│           └── dotnet.sh             # .NET/C# triggers, anti-patterns
 ├── claudboard-generate/SKILL.md      # Artifact generation from analysis report
 ├── claudboard-refresh/SKILL.md       # Delta updates for existing projects
 ├── claudboard-techdebt/SKILL.md      # Deep tech debt analysis
@@ -37,12 +49,19 @@ skills/
     ├── SKILL.md                      # Orchestrator — generates feature-workflow/ into target project
     └── references/
         ├── feature-workflow.template/ # Template tree (SKILL.md, agents, scripts, config)
+        │   ├── references/
+        │   │   ├── agent-preamble.md            # Shared sub-agent preamble ({{INCLUDE}}'d into all agents)
+        │   │   ├── agent-context-loading.md     # Shared context-loading snippet ({{INCLUDE}}'d into coding agents)
+        │   │   ├── reviewer-protocol.md         # Shared reviewer scaffolding ({{INCLUDE}}'d into reviewer agents)
+        │   │   ├── ticket-description-template.md  # Verbatim — copied to generated skill's references/
+        │   │   ├── claude-pricing.md            # Verbatim — copied to generated skill's references/
+        │   │   ├── pricing.md                   # Verbatim copy of claudboard/references/pricing.md — cost computation source of truth
+        │   │   ├── cost-tick.md                 # Per-phase cost tick contract: bash invocation, output format, SESSION_COST_LOG rule
+        │   │   └── phase7-cost-analysis.md      # Phase 7b: log-read + reconciliation (replaces inline Python)
+        │   ├── scripts/
+        │   │   └── compute-cost.sh              # Verbatim copy of claudboard/scripts/compute-cost.sh — bundled for self-contained workflows
         │   └── agents/
-        │       ├── jira-agent.md           # Verbatim — written only when TRACKER_JIRA=true
-        │       ├── tr-agent.md             # Verbatim — written only when TRACKER_TR=true
-        │       ├── pr-agent-ado.md         # Verbatim — written only when REPO_ADO=true
-        │       ├── pr-agent-github.md      # Verbatim — written only when REPO_GITHUB=true
-        │       └── *.md.template           # Templated agents (architect, git, impl, spec-reviewer, etc.)
+        │       └── *.md.template           # All agents (jira, tr, pr-ado, pr-github, architect, git, impl, etc.)
         ├── block-catalog.md          # v1 capability flags: 4 MCP backends + all other flags
         ├── substitution-catalog.md   # v1 {{VAR}} tokens: source, fallback, example
         ├── tracker-config-prompts.md # Prompt text for Jira (TRACKER_JIRA) and T&R (TRACKER_TR) fields
@@ -76,9 +95,13 @@ skills/
 
 **Autonomy lever and synthesis phase (v1):** Every generated `feature-workflow` includes a clarification autonomy prompt at workflow entry (four levels: `autopilot` / `balanced` / `guided` / `manual`) and a `### 1-syn. Stated synthesis` phase that fires before Clarify. The default autonomy level is set in `config.json` (`clarify.defaultAutonomy`, default `balanced`) and is resolved at generation time from `{{CLARIFY_AUTONOMY_DEFAULT}}` in the template.
 
-**Upgrade path caveat:** v1 has no upgrade path. If you need to regenerate, remove the directory manually and re-run `/claudboard-workflow`. This applies to both single-repo and workspace-mode generated skills.
+**Upgrade path caveat:** v1 has no upgrade path. If you need to regenerate — including to pick up the live per-phase cost ticks — remove the directory manually and re-run `/claudboard-workflow`. This applies to both single-repo and workspace-mode generated skills.
 
 **Template source of truth:** `skills/claudboard-workflow/references/feature-workflow.template/` — fixing a bug here benefits all projects on their next regeneration.
+
+**Detection contract:** `skills/claudboard-workflow/scripts/detect.sh` is the canonical detection script. It emits a JSON blob (schema v1 — see `scripts/schema/detect-v1.md`) covering MCP backends, git remote, and sibling repos. The orchestrator SKILL.md runs this script in Phase 1d and consumes the JSON; fallback prose paths handle environments where the script is unavailable.
+
+**Template slimming (slim-feature-workflow-orchestrator change):** The template was restructured to state the agent-spawn contract, gate=mcp lifecycle signals, Phase 7 cost analysis, Phase 1-pre structure, and clarification rubric each exactly once, with per-call sites using a shorthand notation. No behavior change — the orchestrator drives the same workflow; the generated `SKILL.md` is ~26% smaller than the pre-change baseline. Projects regenerated after this change get the slim version; existing generated projects keep their verbose version until they re-run `/claudboard-workflow`.
 
 ## Workspace meta-repo concept
 

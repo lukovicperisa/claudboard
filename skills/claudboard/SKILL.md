@@ -82,3 +82,7 @@ Sub-skills load these shared references as needed:
 | `references/skill-generation.md` | generate | Full-scope skill generation guide |
 
 The techdebt skill also has its own references in `../claudboard-techdebt/references/`: code-smell-catalog, design-debt-patterns, perf-debt-patterns, arch-debt-patterns, severity-matrix, and report-template.
+
+## Per-task cost reporting (opt-in)
+
+See the **"Per-task cost reporting"** section in `README.md` for the opt-in Stop hook that emits a cost line after every `/analyse`, `/generate`, `/refresh`, or `/techdebt` run. The hook uses `scripts/compute-cost.sh` and `scripts/stop-hook.sh` and costs $0 in API tokens.

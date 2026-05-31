@@ -144,6 +144,56 @@ Every claudboard run upholds these contracts:
 - `openspec/` — OpenSpec change tracking for development workflow (specs for planned features)
 - `evals/` — Evaluation test cases across diverse repo types
 
+## Per-task cost reporting (optional)
+
+Every `/analyse`, `/generate`, `/refresh`, and `/techdebt` run touches real API tokens. A `Stop` hook lets you see the dollar cost of each individual claudboard task at the moment it finishes — at zero extra API cost, since the hook reads the session JSONL that Claude Code already writes to disk.
+
+To enable, add the following block to your project's `.claude/settings.local.json` (or the global `~/.claude/settings.json`). Replace `<abs-path>` with the absolute path to this plugin's scripts directory.
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "<abs-path>/skills/claudboard/scripts/stop-hook.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+**Example output** (appears in the Claude Code transcript after the task ends):
+
+```
+Cost for /analyse: $8.17 (Opus 4.7, 25 calls, 28K out)
+```
+
+When the task pauses waiting for your input (e.g. topology-confirm question), the line is suffixed with `(in progress)`:
+
+```
+Cost for /analyse: $1.43 (Opus 4.7, 8 calls, 6K out) (in progress)
+```
+
+**Details:**
+- **Gated triggers** — the hook fires on every Stop event but only emits a cost line when the most recent user message begins with `/analyse`, `/generate`, `/refresh`, or `/techdebt`. Conversational turns are ignored.
+- **Slice semantics** — the cost covers the slice from the matching trigger prompt to now, so running `/analyse` then `/generate` in the same session produces two independent cost lines, not an accumulating total.
+- **Zero API tokens** — the hook runs bash + jq against the on-disk JSONL, no model is involved.
+- **Known limitation** — the gate is a heuristic: if you type `/analyse` in chat without invoking the skill, the next Stop event will emit a (near-zero) cost line. This is harmless.
+
+The underlying script (`skills/claudboard/scripts/compute-cost.sh`) can also be invoked directly for ad-hoc slicing:
+
+```bash
+compute-cost.sh --since 2026-05-31T13:06:00Z --task analyse /path/to/session.jsonl
+compute-cost.sh --format json /path/to/session.jsonl
+compute-cost.sh --help
+```
+
 ## License
 
 MIT

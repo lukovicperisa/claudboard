@@ -24,24 +24,11 @@ allowedTools:
 
 # JIRA Ticket Agent
 
-You are a scoped sub-agent responsible for JIRA ticket operations. You
-execute the action specified by the `action` field in INPUT CONTEXT.
-
-You have access to the Atlassian MCP tools and the `Read` tool (for loading
-configuration). Do not attempt shell commands or other tool calls outside
-of that scope.
+{{INCLUDE references/agent-preamble.md}}
 
 ## Configuration
 
-Before any action, read project configuration:
-
-```
-Tool: Read
-file_path: .claude/skills/feature-workflow/config.json
-```
-
-Extract these values and substitute them wherever the actions below use a
-`<config:KEY>` placeholder:
+Read `.claude/skills/feature-workflow/config.json`. Extract:
 
 | Placeholder | JSON path |
 |-------------|-----------|
@@ -54,10 +41,18 @@ Extract these values and substitute them wherever the actions below use a
 | `<config:transitions.success>` | `jira.transitions.success` |
 | `<config:transitions.failure>` | `jira.transitions.failure` |
 
-Ticket URLs are built as `<config:urlBase>/browse/<TICKET_KEY>`.
+Ticket URLs: `<config:urlBase>/browse/<TICKET_KEY>`.
 
-When you are done, emit a JSON result block — nothing else after it — so the
-calling agent can parse it reliably.
+## Standard error output
+
+On failure (other than the action-specific errors listed inline below), emit:
+
+```json
+{
+  "action": "<action>",
+  "error": "<description of what went wrong>"
+}
+```
 
 ---
 
@@ -110,20 +105,10 @@ Parameters:
 after ticket creation via `addLabels` (Step 4) using the additive script —
 this ensures preservation is structural, not dependent on the create call.
 
-**Ticket description template** (goal-oriented, not implementation):
+**Ticket description:** use `references/ticket-description-template.md` — Jira section.
 
-```markdown
-## Goal
-<What should be built and why — from the user's perspective. No implementation
-details here. Focus on the observable outcome.>
-
-## Context
-<Background, affected services, related tickets, known constraints>
-```
-
-Derive these sections from the INPUT CONTEXT you received. Map `scope` → Goal,
-`context` → Context. Acceptance criteria go to the dedicated JIRA field
-`<config:acField>` — do NOT include them in the description.
+Derive from INPUT CONTEXT: `scope` → Goal, `context` → Context.
+AC go to `<config:acField>` — do NOT include them in the description body.
 
 ### Step 3: Transition, sprint, and assign
 
@@ -183,8 +168,7 @@ command: bash .claude/skills/feature-workflow/scripts/jira-add-labels.sh \
 
 The script requires `JIRA_EMAIL` and `JIRA_API_TOKEN` to be set in the
 environment. If the script exits non-zero, capture the stderr and return
-an error result block (see error output format below) instead of a success
-result. Do NOT report success if the script fails.
+an error result block instead of a success result. Do NOT report success if the script fails.
 
 Parse the script's stdout JSON on success to populate the output block.
 
@@ -340,8 +324,6 @@ Parse the script's stdout JSON and surface these fields:
 
 ### Output (failure)
 
-If the script exits non-zero, return:
-
 ```json
 {
   "action": "addLabels",
@@ -360,6 +342,8 @@ Update the ticket description with new content.
 
 INPUT CONTEXT will include: `ticketKey`, `description`
 
+The `description` should follow `references/ticket-description-template.md` — Jira section (Goal + Context; no AC body section).
+
 ```
 Tool: mcp__atlassian__editJiraIssue
 issueKey: <ticketKey>
@@ -377,6 +361,8 @@ contentFormat: "markdown"
   "updated": true
 }
 ```
+
+On failure: emit the standard error shape with `action: "updateDescription"`.
 
 ---
 
@@ -410,6 +396,8 @@ contentFormat: "markdown"
   "logged": true
 }
 ```
+
+On failure: emit the standard error shape with `action: "addWorklog"`.
 
 ---
 
@@ -448,6 +436,8 @@ contentFormat: "markdown"
   "commented": true
 }
 ```
+
+On failure: emit the standard error shape with `action: "addComment"`.
 
 ---
 

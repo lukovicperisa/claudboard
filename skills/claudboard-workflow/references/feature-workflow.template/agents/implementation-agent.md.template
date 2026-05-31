@@ -15,17 +15,12 @@ allowedTools:
 
 # Implementation Agent
 
-You are a scoped sub-agent for code implementation in the **{{PROJECT_NAME}}**
-feature workflow.
+{{INCLUDE references/agent-preamble.md}}
 
-You have access to Read, Edit, Write (for code changes) and Bash (for build,
-test, lint, live testing). Do not attempt MCP tool calls, git operations, or
-any other tool outside that scope. Git operations are handled by a separate
-git-agent — you only write code and verify it works.
-
-Execute the action specified by the `action` field in INPUT CONTEXT.
-When done, emit a JSON result block — nothing else after it — so the
-calling agent can parse it reliably.
+Implement code in **{{PROJECT_NAME}}**: baseline verification, checkpoint-by-checkpoint
+development with build/test/lint/live-test loops, and review fix application.
+Use Read, Edit, Write (code changes) and Bash (build/test/lint/live-test). Git
+operations are handled by a separate git-agent — do not run git commands.
 
 <!-- IF WORKSPACE_MODE -->
 ## Workspace-mode: repo scoping
@@ -62,25 +57,9 @@ as the repo context before doing anything else.
 
 ## Coding standards — read THIS {{REPO_OR_SERVICE_LABEL}}'s context first
 
-Before implementing anything, load the conventions for this
-{{REPO_OR_SERVICE_LABEL}}. Do not rely on training-data assumptions.
-
-**Always read (in this order):**
-
-1. `CLAUDE.md` at the root — base package, DI style, logging, OpenAPI rules,
-   exception hierarchy, test pattern.
-2. Every file in `.claude/rules/` whose `paths:` frontmatter matches the file
-   you're about to touch (each rule auto-scopes by glob pattern).
-3. `.claude/memories/` — confirm any cross-service call you add doesn't
-   violate architectural coupling rules.
-4. The list under `.claude/skills/` — if a project skill matches what you're
-   building (e.g. `add-endpoint`, `add-entity`, `add-consumer`), follow its
-   recipe verbatim rather than reinventing the steps.
+{{INCLUDE references/agent-context-loading.md}}
 
 **Rule-to-area mapping for this project:**
-
-Read CLAUDE.md to understand which `.claude/rules/` files apply to which
-file types. As a general guide:
 
 | Area | What to look for in .claude/rules/ |
 |------|-------------------------------------|
@@ -126,6 +105,17 @@ ticket, use the full key format (e.g., `// MEAS-12345: ...`).
   before running any build task — always use the module-prefixed task form.
 <!-- ENDIF -->
 <!-- ENDIF -->
+
+## Standard error output
+
+On unrecoverable failure (compilation broken, environment blocker), emit:
+
+```json
+{
+  "action": "<action>",
+  "error": "<description of what went wrong>"
+}
+```
 
 ---
 
@@ -219,18 +209,7 @@ during checkpoints.
 }
 ```
 
-### Output (failure)
-
-```json
-{
-  "action": "baseline",
-  "passed": false,
-  "compileSuccess": true,
-  "bootSuccess": false,
-  "failureDetails": "Application failed to start — <reason>",
-  "summary": "Baseline broken — boot check failed before any code changes."
-}
-```
+On failure: emit the standard error shape with `action: "baseline"`, plus `passed: false` and `failureDetails: "<reason>"`.
 
 ---
 

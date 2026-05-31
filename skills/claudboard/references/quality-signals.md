@@ -34,7 +34,7 @@ Rate each dimension on a 1-10 scale (whole numbers only). Use these scores to de
 
 ## Detection Checklist
 
-Run in parallel during Phase 1. Check each item and record finding.
+Run during Phase 1. Items marked **(discover.sh)** are pre-computed in the discovery JSON — read from that field rather than grepping manually. Remaining items require inspection of files or config.
 
 ### Testing
 - [ ] Test framework present? (JUnit, Spock, Jest, pytest, etc.)
@@ -60,10 +60,10 @@ Run in parallel during Phase 1. Check each item and record finding.
 - [ ] Naming conventions consistent? (sample 3-5 files)
 - [ ] DI pattern consistent? (constructor vs field injection in Java)
 - [ ] Error handling pattern consistent? (Optional, exceptions, Result types)
-- [ ] Broad exception catching? (count `catch (Exception e)` in production code — distinguish empty catches from wrap-and-rethrow)
+- [ ] Broad exception catching? **(discover.sh)** read `wide_scan.anti_patterns.broad_exception_catch`; distinguish empty catches from wrap-and-rethrow by sampling files
 - [ ] Logging framework consistent? (Slf4j, winston, structlog)
-- [ ] TODO/FIXME count? (grep source)
-- [ ] God classes? (files >500 lines)
+- [ ] TODO/FIXME count? **(discover.sh)** read `wide_scan.anti_patterns.todo_fixme`
+- [ ] God classes? **(discover.sh)** read `wide_scan.god_class_candidates` (≥300 LOC threshold); sample top entries for long-method and high-param-count signals
 - [ ] Long methods? (methods >30 lines — sample largest files)
 - [ ] Method parameter count? (methods with >3 args common? any with >7? — see pattern-catalog.md → "Common Java/General Code Quality Rules")
 - [ ] Boolean flag arguments? (methods like `process(data, true, false)` — hides intent)
@@ -71,7 +71,7 @@ Run in parallel during Phase 1. Check each item and record finding.
 - [ ] Star imports? (`import java.util.*` — hides dependencies)
 - [ ] Reflection in business logic? (grep for `ReflectionUtils`, `getDeclaredField`, `setAccessible`, `Method.invoke` in non-config code — see pattern-catalog.md → "Reflection Anti-Patterns")
 - [ ] Parallel class hierarchies? (classes with shared prefix/suffix: Root*/Branch*/Leaf*, *V1/*V2 — if found, diff key methods across hierarchies for duplication)
-- [ ] Copy-paste duplication? (pick 2-3 distinctive code patterns from sampled files, grep for them — if same ~5-line block appears 3+ times in different files, flag it)
+- [ ] Copy-paste duplication? **(discover.sh)** read `duplication.candidates`; if empty (source_file_count < 30 or no hits), report "None detected"
 
 ### Security
 - [ ] Security framework present? (`SecurityFilterChain`, `@EnableMethodSecurity`, `@EnableWebSecurity`)
@@ -258,7 +258,7 @@ In Phase 2 report, ask user: "Naming conventions appear inconsistent — should 
 
 ## Skill Generation Triggers
 
-Use these to decide which skills to generate. Triggers are detected during Wide Scan (step 1c) via grep across the entire repo.
+Use these to decide which skills to generate. Triggers are pre-computed by `scripts/discover.sh` and available in `wide_scan.skill_triggers` (keyed by annotation/pattern name). Custom pattern triggers come from `wide_scan.god_class_candidates` and `wide_scan.inheritance_map`.
 
 ### Standard Triggers
 

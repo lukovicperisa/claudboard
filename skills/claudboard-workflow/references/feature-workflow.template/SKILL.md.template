@@ -298,17 +298,37 @@ meta-repo symlink — these files are automatically version-controlled):
 
 ---
 
+## Agent invocation contract
+
+Every spawn uses the `Agent` tool with:
+
+```
+prompt      = <full contents of agents/<agent>.md> + "\n\nINPUT CONTEXT:\n" + <json>
+allowedTools = the per-call tool list listed at each spawn site
+```
+
+When this document writes `→ spawn <agent>` with `action`, `input`, and `tools`
+fields, that is shorthand for the full `Agent` tool call described above. Do not
+invent extra `allowedTools` entries — use exactly the list shown. If no `tools`
+line appears, the agent has unrestricted tool access.
+
+When `gate=mcp`, wrap every spawn: call `mcp__bosch__agent_start` with
+`{ name: "<agent>", op: "<action>" }` before the spawn, and
+`mcp__bosch__agent_complete` with `{ name: "<agent>" }` after it returns.
+
+When `gate=interactive`, omit all `mcp__bosch__*` wrapping.
+
+---
+
 ## Error handling
 
-<!-- IF TRACKER_JIRA -->
-The workflow is wrapped in a top-level error handler. Treat failures as
-either **recoverable** (handled inside the iterate loop, do NOT touch ticket
-status) or **non-recoverable** (must surface error and halt; fire
-`failure_transition` if configured).
+The workflow is wrapped in a top-level error handler. Treat failures as either
+**recoverable** (handled inside the iterate loop; do NOT touch ticket status)
+or **non-recoverable** (must surface error and halt).
 
 | Category | Examples |
 |----------|----------|
-| **Non-recoverable** | Atlassian MCP unavailable; configured transition name not found in available transitions; ticket not found; network errors after retry; unhandled exception from any sub-agent |
+| **Non-recoverable** | Tracker MCP unavailable; configured transition name not found; ticket not found; network errors after retry; unhandled exception from any sub-agent |
 | **Recoverable** | Test failures; lint failures; design review pushback; spec review pushback; build failures |
 
 Recoverable failures stay inside the existing iterate loops in Phases 3 and
@@ -316,70 +336,28 @@ Recoverable failures stay inside the existing iterate loops in Phases 3 and
 
 On a non-recoverable failure:
 
+<!-- IF TRACKER_JIRA -->
 1. If `<transitions>.failure` is non-null, invoke jira-agent to signal the failure:
 
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of jira-agent.md as instructions>
+→ spawn jira-agent
+  action:  "transition"
+  input:   { ticketKey, lifecycleState: "failure" }
+  tools:   [mcp__atlassian__getTransitionsForJiraIssue, mcp__atlassian__transitionJiraIssue]
+<!-- ENDIF -->
+<!-- IF TRACKER_TR -->
+1. If `tr.transitions.failure` is non-null, invoke tr-agent to signal the failure:
 
-    INPUT CONTEXT:
-    {
-      "action": "transition",
-      "ticketKey": "<ticketKey>",
-      "lifecycleState": "failure"
-    }
-  allowedTools:
-    - mcp__atlassian__getTransitionsForJiraIssue
-    - mcp__atlassian__transitionJiraIssue
-```
+→ spawn tr-agent
+  action:  "transition"
+  input:   { ticketKey, lifecycleState: "failure" }
+  tools:   [mcp__bosch-jira-mcp__jira_transition]
+<!-- ENDIF -->
 
 2. Always surface the original error message to the user (include the error
    details and, for transition misses, the list of available transitions).
 3. Always halt — do not attempt to continue the workflow.
 
-If `<transitions>.failure` is `null`: skip step 1 but still surface the
-error and halt.
-<!-- ENDIF -->
-
-<!-- IF TRACKER_TR -->
-The workflow is wrapped in a top-level error handler. Treat failures as
-either **recoverable** (handled inside the iterate loop, do NOT touch ticket
-status) or **non-recoverable** (must surface error and halt; fire
-`failure_transition` if configured).
-
-| Category | Examples |
-|----------|----------|
-| **Non-recoverable** | T&R MCP unavailable; configured transition name fails; ticket not found; network errors after retry; unhandled exception from any sub-agent |
-| **Recoverable** | Test failures; lint failures; design review pushback; spec review pushback; build failures |
-
-On a non-recoverable failure:
-
-1. If `tr.transitions.failure` is non-null, invoke tr-agent to signal the failure:
-
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of tr-agent.md as instructions>
-
-    INPUT CONTEXT:
-    {
-      "action": "transition",
-      "ticketKey": "<ticketKey>",
-      "lifecycleState": "failure"
-    }
-  allowedTools:
-    - mcp__bosch-jira-mcp__jira_transition
-```
-
-2. Always surface the original error message to the user.
-3. Always halt — do not attempt to continue the workflow.
-
-If `tr.transitions.failure` is `null`: skip step 1 but still surface the
-error and halt.
-<!-- ENDIF -->
+If the failure transition is null: skip step 1 but still surface the error and halt.
 
 ---
 
@@ -480,11 +458,28 @@ Parse `--gate=<mode>` from the invocation message at workflow start (alongside `
 
 Hold the resolved mode as `<gateMode>` throughout the entire workflow — resolved once at invocation, never re-parsed.
 
+### Lifecycle signals (gate=mcp only)
+
+When `gate=mcp`, emit lifecycle signals at the obvious structural boundaries:
+
+| Signal | When | Payload |
+|--------|------|---------|
+| `phase_start` | Entry of each phase | `{ num, title }` (from phase heading) |
+| `phase_complete` | Exit of each phase | `{ num }` |
+| `agent_start` | Before every Agent spawn | `{ name, op }` (name from agent file, op from action) |
+| `agent_complete` | After every Agent spawn returns | `{ name }` |
+| `checkpoint_start` | Around each Phase 3 checkpoint (including baseline as `num: 0`) | `{ num, title }` |
+| `checkpoint_complete` | After each Phase 3 checkpoint completes | `{ num }` |
+
+When `gate=interactive`, omit all lifecycle signals entirely.
+
+The `agent_start`/`agent_complete` wrapping is stated once in "Agent invocation
+contract" above — it applies to every spawn site without inline reminders.
+
 ---
 
 ## Phase 1: Ticket, clarify, specify, and plan
 
-**If gate=mcp:** Call `mcp__bosch__phase_start` with `{ num: 1, title: "Ticket · Clarify · Specify · Plan" }`.
 
 This phase creates the JIRA ticket immediately, then produces two
 deliverables before any code is written: a complete BDD specification and
@@ -498,6 +493,7 @@ used to calculate work log durations later.
 
 ```bash
 WORKFLOW_START=$(date +%s)
+PHASE_1_START=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 SESSION_JSONL_PATH=~/.claude/projects/$(pwd | sed 's|/|-|g')/$CLAUDE_CODE_SESSION_ID.jsonl
 ```
 
@@ -505,44 +501,38 @@ Hold `WORKFLOW_START` and `SESSION_JSONL_PATH` throughout the workflow. After Ph
 elapsed time and log it. Record a second timestamp (`CHECKPOINT`) to
 measure the implementation phase separately.
 
-<!-- IF TRACKER_JIRA -->
 ### 1-pre. Ticket setup
 
+<!-- IF TRACKER_JIRA -->
 Read the agent instructions from
 `.claude/skills/feature-workflow/agents/jira-agent.md` once and reuse
 for all JIRA spawns in Phase 1.
+<!-- ENDIF -->
+<!-- IF TRACKER_TR -->
+Read the agent instructions from
+`.claude/skills/feature-workflow/agents/tr-agent.md` once and reuse
+for all T&R spawns in Phase 1.
+<!-- ENDIF -->
 
 ---
 
-**Path A — user provided a JIRA ticket key:**
+**Path A — user provided a ticket key:**
 
 The ticket already exists. Infer the work area from the user's request
 (`backend` | `frontend` | `devops` | `docs`) and hold it as `<area>`.
 
-Delegate to the JIRA sub-agent to prepare the ticket (transition to start
-state, sprint, assign) and return the current label set:
+Delegate to the tracker sub-agent to prepare the ticket (transition to start
+state, sprint, assign) and return the current state:
 
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of jira-agent.md as instructions>
+<!-- IF TRACKER_JIRA -->
+→ spawn jira-agent
+  action:  "fetchAndPrepare"
+  input:   { ticketKey: "<ticket key from user>" }
+  tools:   [mcp__atlassian__searchJiraIssuesUsingJql, mcp__atlassian__getJiraIssue,
+            mcp__atlassian__getTransitionsForJiraIssue, mcp__atlassian__transitionJiraIssue,
+            mcp__atlassian__editJiraIssue, mcp__atlassian__atlassianUserInfo]
 
-    INPUT CONTEXT:
-    {
-      "action": "fetchAndPrepare",
-      "ticketKey": "<ticket key from user>"
-    }
-  allowedTools:
-    - mcp__atlassian__searchJiraIssuesUsingJql
-    - mcp__atlassian__getJiraIssue
-    - mcp__atlassian__getTransitionsForJiraIssue
-    - mcp__atlassian__transitionJiraIssue
-    - mcp__atlassian__editJiraIssue
-    - mcp__atlassian__atlassianUserInfo
-```
-
-The agent will emit a JSON result block. Extract and hold:
+Extract and hold from the result:
 
 ```json
 {
@@ -563,24 +553,48 @@ Using the additive label resolution from the Project configuration section:
 
 1. `resolvedAreaLabel = resolveAreaLabel(<area>, <areaLabels>)`
 2. `labelsToAdd = <aiLabels> ∪ { resolvedAreaLabel }` (omit if null)
-3. Apply additive labels via the JIRA sub-agent:
+3. Apply additive labels:
 
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of jira-agent.md as instructions>
+→ spawn jira-agent
+  action:  "addLabels"
+  input:   { ticketKey, labelsToAdd: <labelsToAdd array> }
+  tools:   [Read, Bash]
+<!-- ENDIF -->
 
-    INPUT CONTEXT:
-    {
-      "action": "addLabels",
-      "ticketKey": "<ticketKey>",
-      "labelsToAdd": <labelsToAdd array>
-    }
-  allowedTools:
-    - Read
-    - Bash
+<!-- IF TRACKER_TR -->
+→ spawn tr-agent
+  action:  "fetchAndPrepare"
+  input:   { ticketKey: "<ticket key from user>" }
+  tools:   [Read, mcp__bosch-jira-mcp__jira_get_issue, mcp__bosch-jira-mcp__jira_transition,
+            mcp__bosch-jira-mcp__jira_get_myself, mcp__bosch-jira-mcp__jira_update_issue]
+
+Extract and hold from the result:
+
+```json
+{
+  "action": "fetchAndPrepare",
+  "ticketKey": "<projectKey>-XXXXX",
+  "ticketUrl": "<tr.baseUrl>/browse/<projectKey>-XXXXX",
+  "existingDescription": true,
+  "currentStatus": "<current T&R status>",
+  "sprintAssigned": false
+}
 ```
+
+Hold `existingDescription` — it determines whether the description is
+updated after scope clarification (1a).
+
+**Compute and apply labels (Path A):**
+
+1. `resolvedAreaLabel = resolveAreaLabel(<area>, <areaLabels>)`
+2. `labelsToAdd = <aiLabels> ∪ { resolvedAreaLabel }` (omit if null)
+3. Apply additive labels (read-modify-write):
+
+→ spawn tr-agent
+  action:  "addLabels"
+  input:   { ticketKey, labelsToAdd: <labelsToAdd array> }
+  tools:   [mcp__bosch-jira-mcp__jira_get_issue, mcp__bosch-jira-mcp__jira_update_issue]
+<!-- ENDIF -->
 
 Tell the user the ticket URL, then proceed to 1a.
 
@@ -588,6 +602,7 @@ Tell the user the ticket URL, then proceed to 1a.
 
 **Path B — no ticket provided:**
 
+<!-- IF TRACKER_JIRA -->
 Create a new ticket. Before spawning the agent, classify the user's
 initial request:
 
@@ -620,37 +635,21 @@ Delegate to the JIRA sub-agent, passing the additive label set. The `create`
 action will apply labels via `jira-add-labels.sh` after ticket creation —
 there is no `labels` field in `additional_fields`:
 
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of jira-agent.md as instructions>
+→ spawn jira-agent
+  action:  "create"
+  input:   { scope: "<initial description from user — use as-is>",
+             area: "<backend | frontend | devops | docs>",
+             issueType: "<Task | Story>",
+             priority: "<Critical | High | Medium | Low>",
+             acceptanceCriteria: ["<derive what you can from the initial request>"],
+             context: "<any background the user mentioned>",
+             labelsToAdd: <labelsToAdd array> }
+  tools:   [Read, Bash, mcp__atlassian__searchJiraIssuesUsingJql,
+            mcp__atlassian__createJiraIssue, mcp__atlassian__getTransitionsForJiraIssue,
+            mcp__atlassian__transitionJiraIssue, mcp__atlassian__editJiraIssue,
+            mcp__atlassian__atlassianUserInfo]
 
-    INPUT CONTEXT:
-    {
-      "action": "create",
-      "scope": "<initial description from user's request — use as-is, even if brief>",
-      "area": "<backend | frontend | devops | docs — infer from user's request>",
-      "issueType": "<Task | Story — from classification above>",
-      "priority": "<Critical | High | Medium | Low — from classification above>",
-      "acceptanceCriteria": [
-        "<derive what you can from the initial request — even if minimal>"
-      ],
-      "context": "<any background the user mentioned>",
-      "labelsToAdd": <labelsToAdd array computed above>
-    }
-  allowedTools:
-    - Read
-    - Bash
-    - mcp__atlassian__searchJiraIssuesUsingJql
-    - mcp__atlassian__createJiraIssue
-    - mcp__atlassian__getTransitionsForJiraIssue
-    - mcp__atlassian__transitionJiraIssue
-    - mcp__atlassian__editJiraIssue
-    - mcp__atlassian__atlassianUserInfo
-```
-
-The agent will emit a JSON result block. Extract and hold:
+Extract and hold:
 
 ```json
 {
@@ -667,83 +666,6 @@ Tell the user the ticket URL, then proceed to 1a.
 <!-- ENDIF -->
 
 <!-- IF TRACKER_TR -->
-### 1-pre. Ticket setup (T&R)
-
-Read the agent instructions from
-`.claude/skills/feature-workflow/agents/tr-agent.md` once and reuse
-for all T&R spawns in Phase 1.
-
----
-
-**Path A — user provided a T&R ticket key:**
-
-The ticket already exists. Infer the work area from the user's request
-(`backend` | `frontend` | `devops` | `docs`) and hold it as `<area>`.
-
-Delegate to the T&R sub-agent to prepare the ticket (transition to start
-state, assign to self) and return the current state:
-
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of tr-agent.md as instructions>
-
-    INPUT CONTEXT:
-    {
-      "action": "fetchAndPrepare",
-      "ticketKey": "<ticket key from user>"
-    }
-  allowedTools:
-    - Read
-    - mcp__bosch-jira-mcp__jira_get_issue
-    - mcp__bosch-jira-mcp__jira_transition
-    - mcp__bosch-jira-mcp__jira_get_myself
-    - mcp__bosch-jira-mcp__jira_update_issue
-```
-
-Extract and hold from the result:
-
-```json
-{
-  "action": "fetchAndPrepare",
-  "ticketKey": "<projectKey>-XXXXX",
-  "ticketUrl": "<tr.baseUrl>/browse/<projectKey>-XXXXX",
-  "existingDescription": true,
-  "currentStatus": "<current T&R status>",
-  "sprintAssigned": false
-}
-```
-
-**Compute and apply labels (Path A, T&R):**
-
-1. `resolvedAreaLabel = resolveAreaLabel(<area>, <areaLabels>)`
-2. `labelsToAdd = <aiLabels> ∪ { resolvedAreaLabel }` (omit if null)
-3. Apply additive labels via the T&R sub-agent (read-modify-write):
-
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of tr-agent.md as instructions>
-
-    INPUT CONTEXT:
-    {
-      "action": "addLabels",
-      "ticketKey": "<ticketKey>",
-      "labelsToAdd": <labelsToAdd array>
-    }
-  allowedTools:
-    - mcp__bosch-jira-mcp__jira_get_issue
-    - mcp__bosch-jira-mcp__jira_update_issue
-```
-
-Tell the user the ticket URL, then proceed to 1a.
-
----
-
-**Path B — no ticket provided (T&R):**
-
 Auto-create is not available on TRACKER_TR. The bosch-jira-mcp v1 does not
 expose an issue-creation tool. Halt immediately and tell the user — print
 the block below and **end the turn** (do not call another tool until the
@@ -799,13 +721,9 @@ Emit a user-facing block with:
 | `guided` | Print synthesis, then HALT. For multi-ticket input, the blocking confirmation MUST cover BOTH the prose summary AND the proposed slicing in a single exchange — slicing is a direction-level decision and is NOT auto-accepted in guided mode. |
 | `manual` | Print synthesis, then HALT. Wait for user `confirm` or `correct: <feedback>`. |
 
-**HALT means: end the turn immediately after printing the synthesis.** Do
-not call any further tool until the user replies with `confirm` or
-`correct: <feedback>`. The CLI does not pause on plain text — only
-the harness pause tool or end-of-turn returns control. See "Halt mechanics"
-and "Gate mode" near the top of this document. This rule applies to every `HALT` /
-`Wait for user` row in the table above and to every later "wait for user"
-point in this workflow.
+**HALT means: end the turn after printing.** See "Halt mechanics" above — plain
+text does not pause the CLI; only end-of-turn does. This applies to every blocking
+row in the table above and to all subsequent "wait for user" points.
 
 **Correction loop (balanced / guided / manual):**
 
@@ -824,6 +742,17 @@ for the BDD spec scope.
 
 ### 1a. Clarify scope
 
+**Canonical clarification dimensions** (referenced by all autonomy-level subsections below):
+
+1. Target {{REPO_OR_SERVICE_LABEL}}
+2. User-facing impact
+3. Constraints and related tickets
+4. Actors and roles
+5. Error and edge cases
+6. Authorization requirements
+7. Integration/event boundaries
+8. Input validation rules
+
 Branch on `<autonomyLevel>`:
 
 #### autopilot — skip
@@ -831,34 +760,21 @@ Branch on `<autonomyLevel>`:
 Skip 1a entirely. Proceed directly to 1b using the post-synthesis scope as
 the clarified scope.
 
-Accumulate all eight canonical clarification dimensions as "assumed from
-synthesis" entries for the 1d gate assumptions list:
-
-1. Target {{REPO_OR_SERVICE_LABEL}} — assumed from synthesis
-2. User-facing impact — assumed from synthesis
-3. Constraints and related tickets — assumed from synthesis
-4. Actors and roles — assumed from synthesis
-5. Error and edge cases — assumed from synthesis
-6. Authorization requirements — assumed from synthesis
-7. Integration/event boundaries — assumed from synthesis
-8. Input validation rules — assumed from synthesis
+Accumulate all eight canonical clarification dimensions (listed above) as
+"assumed from synthesis" entries for the 1d gate assumptions list.
 
 Also treat the post-synthesis scope as the clarified scope for the ticket
 description update step below.
 
 #### balanced — 8-dimension enumeration rubric
 
-Before asking any question, enumerate all eight dimensions and mark each:
+Before asking any question, enumerate all eight dimensions from the canonical
+list above and mark each:
 
 ```
-1. Target {{REPO_OR_SERVICE_LABEL}}:   clear: <statement> | unclear: <what is missing>
-2. User-facing impact:  clear: <statement> | unclear: <what is missing>
-3. Constraints / related tickets:  clear: <statement> | unclear: <what is missing>
-4. Actors and roles:  clear: <statement> | unclear: <what is missing>
-5. Error and edge cases:  clear: <statement> | unclear: <what is missing>
-6. Authorization requirements:  clear: <statement> | unclear: <what is missing>
-7. Integration / event boundaries:  clear: <statement> | unclear: <what is missing>
-8. Input validation rules:  clear: <statement> | unclear: <what is missing>
+1. <dimension>:   clear: <statement> | unclear: <what is missing>
+...
+8. <dimension>:   clear: <statement> | unclear: <what is missing>
 ```
 
 Present the full rubric to the user (all eight lines with their `clear`/`unclear`
@@ -890,7 +806,7 @@ any `clear` mark — treat a pushback as an `unclear` and generate a question.
 Every `unclear` MUST become a question. Loop until all three dimensions are
 `clear`.
 
-Defer dimensions 4–8 from the balanced rubric (actors, error cases,
+Defer dimensions 4–8 from the canonical list (actors, error cases,
 authorization, integration boundaries, validation rules) to downstream agents
 (`sdd-expert-agent`'s `openQuestions` and `architect-agent`'s `risks`).
 Accumulate deferred dimensions 4–8 as "assumed from ticket text" entries for
@@ -898,8 +814,8 @@ the 1d gate assumptions list.
 
 #### manual — free-form chat
 
-Ask the user about all eight canonical clarification dimensions in conversation
-form (not a structured rubric):
+Ask the user about all eight canonical clarification dimensions (listed above)
+in conversation form:
 
 1. Which {{REPO_OR_SERVICE_LABEL}} is this for?
 2. Is there a user-facing impact, or is it internal/infra?
@@ -930,88 +846,44 @@ ticket description — but only if it needs updating:
   well-described.
 
 <!-- IF TRACKER_JIRA -->
-When updating, compose a description using the ticket description template
-(Goal / Acceptance Criteria / Context) populated with the clarified scope.
-Acceptance Criteria go to the dedicated Jira custom field — do NOT include
-them in the description body. Delegate to the JIRA sub-agent:
+When updating, compose a description using the template at
+`references/ticket-description-template.md` (Goal + Context sections only —
+Acceptance Criteria go to the Jira custom field, NOT the description body).
+Delegate to the JIRA sub-agent:
 
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of jira-agent.md as instructions>
-
-    INPUT CONTEXT:
-    {
-      "action": "updateDescription",
-      "ticketKey": "<ticketKey from 1-pre>",
-      "description": "<updated markdown description: Goal + Context sections only>"
-    }
-  allowedTools:
-    - mcp__atlassian__editJiraIssue
-```
+→ spawn jira-agent
+  action:  "updateDescription"
+  input:   { ticketKey: "<ticketKey from 1-pre>",
+             description: "<updated markdown description: Goal + Context sections only>" }
+  tools:   [mcp__atlassian__editJiraIssue]
 <!-- ENDIF -->
 
 <!-- IF TRACKER_TR -->
-When updating, compose a description using the T&R description template.
+When updating, compose a description using the template at
+`references/ticket-description-template.md` (Goal + Acceptance Criteria + Context).
 Because T&R cannot write custom fields, Acceptance Criteria MUST be inlined
-in the description body under a `## Acceptance Criteria` heading:
-
-```markdown
-## Goal
-<what should be built and why — from the user's perspective>
-
-## Acceptance Criteria
-- <criterion 1>
-- <criterion 2>
-
-## Context
-<background, affected services, constraints, related tickets>
-```
-
+in the description body under `## Acceptance Criteria`.
 Delegate to the T&R sub-agent:
 
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of tr-agent.md as instructions>
-
-    INPUT CONTEXT:
-    {
-      "action": "updateDescription",
-      "ticketKey": "<ticketKey from 1-pre>",
-      "description": "<updated markdown description: Goal + AC + Context>"
-    }
-  allowedTools:
-    - mcp__bosch-jira-mcp__jira_update_issue
-```
+→ spawn tr-agent
+  action:  "updateDescription"
+  input:   { ticketKey: "<ticketKey from 1-pre>",
+             description: "<updated markdown description: Goal + AC + Context>" }
+  tools:   [mcp__bosch-jira-mcp__jira_update_issue]
 <!-- ENDIF -->
 
 <!-- IF WORKSPACE_MODE -->
 ### 1a-ws. Affected repos inference and confirmation
 
 After scope is clarified but before writing the BDD spec, the architect-agent
-must infer which repos are affected. Delegate to the architect-agent:
+must infer which repos are affected:
 
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of architect-agent.md as instructions>
-
-    INPUT CONTEXT:
-    {
-      "action": "infer-affected-repos",
-      "scope": "<clarified scope from 1a>",
-      "workspaceRoot": "<workspaceRoot>",
-      "availableRepos": <Object.keys(config.repos)>,
-      "analysisReportsDir": ".claude/reports/"
-    }
-  allowedTools:
-    - Read
-    - Bash
-```
+→ spawn architect-agent
+  action:  "infer-affected-repos"
+  input:   { scope: "<clarified scope from 1a>", workspaceRoot,
+             availableRepos: <Object.keys(config.repos)>,
+             analysisReportsDir: ".claude/reports/" }
+  tools:   [Read, Bash]
 
 The agent reads each repo's analysis report at
 `.claude/reports/claudboard-analysis-<repo>.md` (and ecosystem coupling rules
@@ -1087,26 +959,13 @@ Read the agent instructions from
 `.claude/skills/feature-workflow/agents/sdd-expert-agent.md`, then spawn
 the agent:
 
-**If gate=mcp:** Call `mcp__bosch__agent_start` with `{ name: "sdd-expert-agent", op: "write BDD spec" }`.
-
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of sdd-expert-agent.md as instructions>
-
-    INPUT CONTEXT:
-    {
-      "scope": "<clarified scope from 1a>",
-      "specDir": "specs/<NNN>-<TICKET>-<slug>/",
-      "service": "<{{REPO_OR_SERVICE_LABEL}} name and path>",
-      "actors": ["<actor 1 and role>", "<actor 2 and role>"],
-      "constraints": "<known constraints, related tickets, edge cases>",
-      "area": "<BE | FE | DevOps | Docs>"
-    }
-```
-
-**If gate=mcp:** Call `mcp__bosch__agent_complete` with `{ name: "sdd-expert-agent" }`.
+→ spawn sdd-expert-agent
+  input:   { scope: "<clarified scope from 1a>",
+             specDir: "specs/<NNN>-<TICKET>-<slug>/",
+             service: "<{{REPO_OR_SERVICE_LABEL}} name and path>",
+             actors: ["<actor 1 and role>", "<actor 2 and role>"],
+             constraints: "<known constraints, related tickets, edge cases>",
+             area: "<BE | FE | DevOps | Docs>" }
 
 The agent will emit a JSON result block. Extract and hold for Phase 1c:
 
@@ -1134,24 +993,11 @@ Read the agent instructions from
 `.claude/skills/feature-workflow/agents/architect-agent.md`, then spawn
 the agent:
 
-**If gate=mcp:** Call `mcp__bosch__agent_start` with `{ name: "architect-agent", op: "write execution plan" }`.
-
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of architect-agent.md as instructions>
-
-    INPUT CONTEXT:
-    {
-      "specDir": "specs/<NNN>-<TICKET>-<slug>/",
-      "service": "<{{REPO_OR_SERVICE_LABEL}} name and path>",
-      "area": "<BE | FE | DevOps | Docs>",
-      "specFiles": <specFiles array from sdd-expert-agent result>
-    }
-```
-
-**If gate=mcp:** Call `mcp__bosch__agent_complete` with `{ name: "architect-agent" }`.
+→ spawn architect-agent
+  input:   { specDir: "specs/<NNN>-<TICKET>-<slug>/",
+             service: "<{{REPO_OR_SERVICE_LABEL}} name and path>",
+             area: "<BE | FE | DevOps | Docs>",
+             specFiles: <specFiles array from sdd-expert-agent result> }
 
 The agent will emit a JSON result block:
 
@@ -1179,28 +1025,12 @@ includes the Affected repos list and the Recommended PR merge order.
 
 If the architect-agent did not produce slices in Phase 1c, spawn it again:
 
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of architect-agent.md as instructions>
-
-    INPUT CONTEXT:
-    {
-      "action": "write-plan-slices",
-      "ticketKey": "<ticketKey>",
-      "affectedRepos": <affectedRepos>,
-      "implementationOrder": <implementationOrder>,
-      "prMergeOrder": <prMergeOrder>,
-      "prMergeRationale": "<prMergeRationale>",
-      "masterPlanPath": ".claude/changes/<ticketKey>/plan.md",
-      "slicesDir": ".claude/changes/<ticketKey>/slices/"
-    }
-  allowedTools:
-    - Read
-    - Write
-    - Bash
-```
+→ spawn architect-agent
+  action:  "write-plan-slices"
+  input:   { ticketKey, affectedRepos, implementationOrder, prMergeOrder,
+             prMergeRationale, masterPlanPath: ".claude/changes/<ticketKey>/plan.md",
+             slicesDir: ".claude/changes/<ticketKey>/slices/" }
+  tools:   [Read, Write, Bash]
 <!-- ENDIF -->
 
 ### 1d. Gate — spec and plan review
@@ -1255,50 +1085,25 @@ with `approve` or specific revision feedback.
 
 1. Re-invoke sdd-expert-agent with the change request injected as additional context:
 
-   ```
-   Tool: Agent
-   Parameters:
-     prompt: |
-       <paste the full contents of sdd-expert-agent.md as instructions>
-
-       INPUT CONTEXT:
-       {
-         "scope": "<original clarified scope from 1a>",
-         "specDir": "specs/<NNN>-<TICKET>-<slug>/",
-         "service": "<service name and path>",
-         "actors": ["<actors from 1a>"],
-         "constraints": "<constraints from 1a>",
-         "area": "<area>",
-         "revisionRequest": "<changes value from gate result — pass verbatim>"
-       }
-     allowedTools:
-       - Read
-       - Edit
-       - Write
-       - Bash
-   ```
+→ spawn sdd-expert-agent
+  input:   { scope: "<original clarified scope from 1a>",
+             specDir: "specs/<NNN>-<TICKET>-<slug>/",
+             service: "<service name and path>",
+             actors: ["<actors from 1a>"],
+             constraints: "<constraints from 1a>",
+             area: "<area>",
+             revisionRequest: "<changes value from gate result — pass verbatim>" }
+  tools:   [Read, Edit, Write, Bash]
 
 2. Re-invoke architect-agent with the updated spec and the same change request:
 
-   ```
-   Tool: Agent
-   Parameters:
-     prompt: |
-       <paste the full contents of architect-agent.md as instructions>
-
-       INPUT CONTEXT:
-       {
-         "specDir": "specs/<NNN>-<TICKET>-<slug>/",
-         "service": "<service name and path>",
-         "area": "<area>",
-         "specFiles": <updated specFiles array from sdd-expert result>,
-         "revisionRequest": "<changes value from gate result — pass verbatim>"
-       }
-     allowedTools:
-       - Read
-       - Write
-       - Bash
-   ```
+→ spawn architect-agent
+  input:   { specDir: "specs/<NNN>-<TICKET>-<slug>/",
+             service: "<service name and path>",
+             area: "<area>",
+             specFiles: <updated specFiles array from sdd-expert result>,
+             revisionRequest: "<changes value from gate result — pass verbatim>" }
+  tools:   [Read, Write, Bash]
 
 3. Re-issue the gate:
    - **If gate=mcp:** Call `mcp__bosch__gate_request` with the updated spec and plan payload.
@@ -1322,22 +1127,11 @@ use seconds or days.
 <!-- IF TRACKER_JIRA -->
 Delegate to the JIRA sub-agent to log the work:
 
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of jira-agent.md as instructions>
-
-    INPUT CONTEXT:
-    {
-      "action": "addWorklog",
-      "ticketKey": "<ticketKey>",
-      "timeSpent": "<elapsed time in JIRA format — e.g., 1h 30m>",
-      "comment": "Requirement refinement work"
-    }
-  allowedTools:
-    - mcp__atlassian__addWorklogToJiraIssue
-```
+→ spawn jira-agent
+  action:  "addWorklog"
+  input:   { ticketKey, timeSpent: "<elapsed time — e.g., 1h 30m>",
+             comment: "Requirement refinement work" }
+  tools:   [mcp__atlassian__addWorklogToJiraIssue]
 
 Record the checkpoint timestamp for Phase 7:
 
@@ -1361,7 +1155,6 @@ a time-tracking record — just in the comment, not a separate worklog entry.
 
 Once confirmed, execute Phases 2–7 autonomously without pausing.
 
-**If gate=mcp:** Call `mcp__bosch__phase_complete` with `{ num: 1 }`.
 
 Record Phase 1 spawn counts in the SPAWN_LOG context memo:
 
@@ -1378,11 +1171,14 @@ SPAWN_LOG:
 ```
 <!-- ENDIF -->
 
+### 1-end. Cost tick → see references/cost-tick.md (label="Spec+Plan", since=PHASE_1_START)
+
+Record: `PHASE_2_START=$(date -u +%Y-%m-%dT%H:%M:%SZ)`
+
 ---
 
 ## Phase 2: Create branch
 
-**If gate=mcp:** Call `mcp__bosch__phase_start` with `{ num: 2, title: "Create Branch" }`.
 
 <!-- IF WORKSPACE_MODE -->
 **Workspace mode:** Create the same branch in every affected repo. The branch
@@ -1411,24 +1207,10 @@ Delegate to the git sub-agent. Read the agent instructions from
 `.claude/skills/feature-workflow/agents/git-agent.md`, then spawn
 the agent:
 
-**If gate=mcp:** Call `mcp__bosch__agent_start` with `{ name: "git-agent", op: "create-branch" }`.
-
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of git-agent.md as instructions>
-
-    INPUT CONTEXT:
-    {
-      "action": "create-branch",
-      "branchName": "feature/<projectKey>-XXXXX/short-description"
-    }
-  allowedTools:
-    - Bash
-```
-
-**If gate=mcp:** Call `mcp__bosch__agent_complete` with `{ name: "git-agent" }`.
+→ spawn git-agent
+  action:  "create-branch"
+  input:   { branchName: "feature/<projectKey>-XXXXX/short-description" }
+  tools:   [Bash]
 
 The agent will emit a JSON result block:
 
@@ -1439,18 +1221,20 @@ The agent will emit a JSON result block:
 }
 ```
 
-**If gate=mcp:** Call `mcp__bosch__phase_complete` with `{ num: 2 }`.
 
 Append to the SPAWN_LOG:
 ```
   phase2: git-agent×1
 ```
 
+### 2-end. Cost tick → see references/cost-tick.md (label="Branch", since=PHASE_2_START)
+
+Record: `PHASE_3_START=$(date -u +%Y-%m-%dT%H:%M:%SZ)`
+
 ---
 
 ## Phase 3: Develop and test
 
-**If gate=mcp:** Call `mcp__bosch__phase_start` with `{ num: 3, title: "Develop and Test" }`.
 
 <!-- IF WORKSPACE_MODE -->
 **Workspace mode:** Develop each affected repo in `implementationOrder`. For
@@ -1475,57 +1259,24 @@ reuse for all spawns in this phase.
 
 ### 3a. Baseline and checkpoint 1 — in parallel
 
-**If gate=mcp:** Call `mcp__bosch__checkpoint_start` with `{ num: 0, title: "Baseline Verification" }`.
 
 Launch both the baseline verification and checkpoint 1 simultaneously.
 Send them in a **single message with two Agent tool calls**, both with
 `run_in_background: true`:
 
-**If gate=mcp:** Call `mcp__bosch__agent_start` with `{ name: "implementation-agent", op: "baseline" }` before the baseline spawn.
-**If gate=mcp:** Call `mcp__bosch__agent_start` with `{ name: "implementation-agent", op: "checkpoint 1" }` before the checkpoint 1 spawn.
+→ spawn implementation-agent  [background]
+  input:   { action: "baseline", service: "<{{REPO_OR_SERVICE_LABEL}} name and path>",
+             area: "<BE | FE>" }
+  tools:   [Read, Edit, Write, Bash]
 
-```
-Tool: Agent  (run_in_background: true)
-Parameters:
-  prompt: |
-    <paste the full contents of implementation-agent.md as instructions>
-
-    INPUT CONTEXT:
-    {
-      "action": "baseline",
-      "service": "<{{REPO_OR_SERVICE_LABEL}} name and path>",
-      "area": "<BE | FE>"
-    }
-  allowedTools:
-    - Read
-    - Edit
-    - Write
-    - Bash
-```
-
-```
-Tool: Agent  (run_in_background: true)
-Parameters:
-  prompt: |
-    <paste the full contents of implementation-agent.md as instructions>
-
-    INPUT CONTEXT:
-    {
-      "action": "checkpoint",
-      "executionPlanPath": "specs/<NNN>-<TICKET>-<slug>/execution-plan.md",
-      "checkpointNumber": 1,
-      "specDir": "specs/<NNN>-<TICKET>-<slug>/",
-      "service": "<{{REPO_OR_SERVICE_LABEL}} name and path>",
-      "area": "<BE | FE>"
-    }
-  allowedTools:
-    - Read
-    - Edit
-    - Write
-    - Bash
-```
-
-After each completes: **if gate=mcp:** call `mcp__bosch__agent_complete` with `{ name: "implementation-agent" }`.
+→ spawn implementation-agent  [background]
+  action:  "checkpoint"
+  input:   { executionPlanPath: "specs/<NNN>-<TICKET>-<slug>/execution-plan.md",
+             checkpointNumber: 1,
+             specDir: "specs/<NNN>-<TICKET>-<slug>/",
+             service: "<{{REPO_OR_SERVICE_LABEL}} name and path>",
+             area: "<BE | FE>" }
+  tools:   [Read, Edit, Write, Bash]
 
 Wait for both to complete.
 
@@ -1536,49 +1287,27 @@ fix the issues before re-invoking the workflow. Any checkpoint 1 work
 done in parallel is discarded — the branch can be deleted and recreated.
 Do NOT proceed with further checkpoints.
 
-**If baseline passes:** **if gate=mcp:** Call `mcp__bosch__checkpoint_complete` with `{ num: 0 }`.
-Continue with checkpoint 1's result. If checkpoint 1
-also completed successfully, **if gate=mcp:** call `mcp__bosch__checkpoint_complete` with `{ num: 1 }` and proceed to checkpoint 2. If checkpoint 1 hit a
+**If baseline passes:** Continue with checkpoint 1's result. If checkpoint 1
+also completed successfully, proceed to checkpoint 2. If checkpoint 1 hit a
 blocker, present it to the user.
 
 ### 3b. Remaining checkpoints
 
-For each remaining checkpoint (2 to N) in the execution plan:
-1. **If gate=mcp:** Call `mcp__bosch__checkpoint_start` with `{ num: N, title: "<checkpoint title from plan>" }`.
-2. **If gate=mcp:** Call `mcp__bosch__agent_start` with `{ name: "implementation-agent", op: "checkpoint N" }`.
-3. Spawn the implementation-agent sequentially:
+For each remaining checkpoint (2 to N) in the execution plan, spawn the implementation-agent sequentially:
 
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of implementation-agent.md as instructions>
-
-    INPUT CONTEXT:
-    {
-      "action": "checkpoint",
-      "executionPlanPath": "specs/<NNN>-<TICKET>-<slug>/execution-plan.md",
-      "checkpointNumber": <N>,
-      "specDir": "specs/<NNN>-<TICKET>-<slug>/",
-      "service": "<{{REPO_OR_SERVICE_LABEL}} name and path>",
-      "area": "<BE | FE>"
-    }
-  allowedTools:
-    - Read
-    - Edit
-    - Write
-    - Bash
-```
-
-4. After it returns: **if gate=mcp:** call `mcp__bosch__agent_complete` with `{ name: "implementation-agent" }`.
+→ spawn implementation-agent
+  action:  "checkpoint"
+  input:   { executionPlanPath: "specs/<NNN>-<TICKET>-<slug>/execution-plan.md",
+             checkpointNumber: <N>,
+             specDir: "specs/<NNN>-<TICKET>-<slug>/",
+             service: "<{{REPO_OR_SERVICE_LABEL}} name and path>",
+             area: "<BE | FE>" }
+  tools:   [Read, Edit, Write, Bash]
 
 **If `completed` is `false`:** the agent hit a blocker. Present the
 `blocker` description to the user and **end the turn** — wait for the
 user's guidance before retrying or proceeding (no further tool calls in
 the same response; see "Halt mechanics").
-
-**After each checkpoint completes successfully:** **if gate=mcp:** call `mcp__bosch__checkpoint_complete`
-with `{ num: N }`.
 
 **After each checkpoint:** aggregate `testsRun`, `testsPassed`, and
 `liveTestResults` from the result into a cumulative test summary. This
@@ -1587,13 +1316,16 @@ summary is passed to the PR agent in Phase 6.
 Only proceed to Phase 4 when **all checkpoints are complete** and every
 scenario in the BDD spec is satisfied.
 
-**If gate=mcp:** Call `mcp__bosch__phase_complete` with `{ num: 3 }`.
 
 Append to the SPAWN_LOG with actual spawn counts:
 ```
   phase3: impl-agent×N (baseline×1, CP×<checkpoint_count>)
 ```
 where N = 1 (baseline) + number of checkpoints completed.
+
+### 3-end. Cost tick → see references/cost-tick.md (label="Implement", since=PHASE_3_START)
+
+Record: `PHASE_4_START=$(date -u +%Y-%m-%dT%H:%M:%SZ)`
 
 <!-- IF TRACKER_JIRA -->
 **Note:** Test failures, lint failures, and build failures encountered during
@@ -1606,7 +1338,6 @@ top-level error handler and do NOT touch the Jira ticket status.
 
 ## Phase 4: Commit
 
-**If gate=mcp:** Call `mcp__bosch__phase_start` with `{ num: 4, title: "Commit" }`.
 
 <!-- IF WORKSPACE_MODE -->
 **Workspace mode:** Commit each affected repo independently. For each `repo`
@@ -1630,21 +1361,9 @@ must be included in the commit. Pass it as `specDir` to `stage-and-prepare`.
 
 ### 4a. Check commit count
 
-Spawn the git-agent:
-
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of git-agent.md as instructions>
-
-    INPUT CONTEXT:
-    {
-      "action": "count-commits"
-    }
-  allowedTools:
-    - Bash
-```
+→ spawn git-agent
+  action:  "count-commits"
+  tools:   [Bash]
 
 Extract `commitCount`:
 - If **1 commit**: skip to Step 4c
@@ -1658,64 +1377,33 @@ Spawn the git-agent with the `squash` action. The agent runs
 detected main branch. If the rebase encounters conflicts, the agent
 reports an error — stop and tell the user to resolve manually.
 
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of git-agent.md as instructions>
-
-    INPUT CONTEXT:
-    {
-      "action": "squash"
-    }
-  allowedTools:
-    - Bash
-```
+→ spawn git-agent
+  action:  "squash"
+  tools:   [Bash]
 
 Extract `combinedDiff` and `backupBranch` from the result.
 
 Use the `combinedDiff` to compose the commit message (Step 4c format), then
 spawn the git-agent with the `commit` action (see 4c below).
 
-After committing, verify the squash integrity by spawning the git-agent with
-the `verify-squash` action:
+After committing, verify the squash integrity:
 
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of git-agent.md as instructions>
-
-    INPUT CONTEXT:
-    {
-      "action": "verify-squash",
-      "backupBranch": "<backupBranch from squash result>"
-    }
-  allowedTools:
-    - Bash
-```
+→ spawn git-agent
+  action:  "verify-squash"
+  input:   { backupBranch: "<backupBranch from squash result>" }
+  tools:   [Bash]
 
 If `verified` is `false`, stop and tell the user. Include the recovery
 command from the error result.
 
 ### 4c. Stage and commit
 
-**Stage** — spawn the git-agent:
+**Stage:**
 
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of git-agent.md as instructions>
-
-    INPUT CONTEXT:
-    {
-      "action": "stage-and-prepare",
-      "specDir": "specs/<NNN>-{{TICKET_PREFIX}}-XXXXX-slug/"
-    }
-  allowedTools:
-    - Bash
-```
+→ spawn git-agent
+  action:  "stage-and-prepare"
+  input:   { specDir: "specs/<NNN>-{{TICKET_PREFIX}}-XXXXX-slug/" }
+  tools:   [Bash]
 
 **Compose the commit message:**
 
@@ -1729,27 +1417,16 @@ Parameters:
 **Description block**: explain why and what; wrap at 72 chars; group changes
 under headings when the diff spans multiple areas.
 
-**Commit** — spawn the git-agent:
+**Commit:**
 
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of git-agent.md as instructions>
-
-    INPUT CONTEXT:
-    {
-      "action": "commit",
-      "message": "<full commit message>"
-    }
-  allowedTools:
-    - Bash
-```
+→ spawn git-agent
+  action:  "commit"
+  input:   { message: "<full commit message>" }
+  tools:   [Bash]
 
 After committing, collect the final commit message (first line + body) — you
 will pass this to the PR agent in Phase 6.
 
-**If gate=mcp:** Call `mcp__bosch__phase_complete` with `{ num: 4 }`.
 
 Append to the SPAWN_LOG with actual spawn counts:
 ```
@@ -1757,11 +1434,14 @@ Append to the SPAWN_LOG with actual spawn counts:
 ```
 where N is the actual number of git-agent spawns used for committing.
 
+### 4-end. Cost tick → see references/cost-tick.md (label="Commit", since=PHASE_4_START)
+
+Record: `PHASE_5_START=$(date -u +%Y-%m-%dT%H:%M:%SZ)`
+
 ---
 
 ## Phase 5: Review
 
-**If gate=mcp:** Call `mcp__bosch__phase_start` with `{ num: 5, title: "Review" }`.
 
 <!-- IF WORKSPACE_MODE -->
 **Workspace mode:** Run both review gates for each affected repo. For each
@@ -1780,85 +1460,37 @@ implementation-agent applies fixes.
 
 First, get the list of changed files:
 
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of git-agent.md as instructions>
-
-    INPUT CONTEXT:
-    {
-      "action": "get-changed-files"
-    }
-  allowedTools:
-    - Bash
-```
+→ spawn git-agent
+  action:  "get-changed-files"
+  tools:   [Bash]
 
 Then spawn the spec-reviewer. Read agent instructions from
 `.claude/skills/feature-workflow/agents/spec-reviewer.md`:
 
-**If gate=mcp:** Call `mcp__bosch__agent_start` with `{ name: "spec-reviewer", op: "verify BDD spec coverage" }`.
-
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of spec-reviewer.md as instructions>
-
-    INPUT CONTEXT:
-    {
-      "specDir": "specs/<NNN>-<TICKET>-<slug>/",
-      "service": "<{{REPO_OR_SERVICE_LABEL}} name and path>",
-      "changedFiles": <changedFiles array from git-agent>,
-      "area": "<BE | FE>"
-    }
-  allowedTools:
-    - Read
-    - Bash
-```
-
-**If gate=mcp:** Call `mcp__bosch__agent_complete` with `{ name: "spec-reviewer" }`.
+→ spawn spec-reviewer
+  input:   { specDir: "specs/<NNN>-<TICKET>-<slug>/",
+             service: "<{{REPO_OR_SERVICE_LABEL}} name and path>",
+             changedFiles: <changedFiles array from git-agent>,
+             area: "<BE | FE>" }
+  tools:   [Read, Bash]
 
 **If `passed` is `false`** (Critical findings):
 
 1. Spawn the implementation-agent with `fix-findings`:
 
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of implementation-agent.md as instructions>
-
-    INPUT CONTEXT:
-    {
-      "action": "fix-findings",
-      "findings": <Critical + Major findings from spec-reviewer>,
-      "reviewerType": "spec",
-      "service": "<{{REPO_OR_SERVICE_LABEL}} name and path>",
-      "area": "<BE | FE>"
-    }
-  allowedTools:
-    - Read
-    - Edit
-    - Write
-    - Bash
-```
+→ spawn implementation-agent
+  action:  "fix-findings"
+  input:   { findings: <Critical + Major findings from spec-reviewer>,
+             reviewerType: "spec",
+             service: "<{{REPO_OR_SERVICE_LABEL}} name and path>",
+             area: "<BE | FE>" }
+  tools:   [Read, Edit, Write, Bash]
 
 2. Amend the commit:
 
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of git-agent.md as instructions>
-
-    INPUT CONTEXT:
-    {
-      "action": "amend"
-    }
-  allowedTools:
-    - Bash
-```
+→ spawn git-agent
+  action:  "amend"
+  tools:   [Bash]
 
 3. Re-run the spec-reviewer to verify fixes resolved the Critical findings.
 
@@ -1867,38 +1499,20 @@ user and ask for guidance.
 
 ### 5b. Design review
 
-**If gate=mcp:** Call `mcp__bosch__checkpoint_start` with `{ num: 52, title: "Design Review" }`.
 
 Spawn the design-reviewer. Read agent instructions from
 `.claude/skills/feature-workflow/agents/design-reviewer.md`:
 
-**If gate=mcp:** Call `mcp__bosch__agent_start` with `{ name: "design-reviewer", op: "verify code quality" }`.
-
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of design-reviewer.md as instructions>
-
-    INPUT CONTEXT:
-    {
-      "service": "<{{REPO_OR_SERVICE_LABEL}} name and path>",
-      "changedFiles": <changedFiles array from git-agent>,
-      "area": "<BE | FE>"
-    }
-  allowedTools:
-    - Read
-    - Bash
-```
-
-**If gate=mcp:** Call `mcp__bosch__agent_complete` with `{ name: "design-reviewer" }`.
+→ spawn design-reviewer
+  input:   { service: "<{{REPO_OR_SERVICE_LABEL}} name and path>",
+             changedFiles: <changedFiles array from git-agent>,
+             area: "<BE | FE>" }
+  tools:   [Read, Bash]
 
 **If `passed` is `false`** (Critical findings): follow the same
 fix → amend → re-review loop as 5a, using `"reviewerType": "design"`.
 
-**If gate=mcp:** Call `mcp__bosch__checkpoint_complete` with `{ num: 52 }`.
 
-**If gate=mcp:** Call `mcp__bosch__phase_complete` with `{ num: 5 }`.
 
 Append to the SPAWN_LOG with actual spawn counts:
 ```
@@ -1906,12 +1520,15 @@ Append to the SPAWN_LOG with actual spawn counts:
 ```
 where N is the actual number of spawns (0 if that reviewer was skipped).
 
+### 5-end. Cost tick → see references/cost-tick.md (label="Review", since=PHASE_5_START)
+
+Record: `PHASE_6_START=$(date -u +%Y-%m-%dT%H:%M:%SZ)`
+
 ---
 
 <!-- IF REPO_ADO -->
 ## Phase 6: PR creation
 
-**If gate=mcp:** Call `mcp__bosch__phase_start` with `{ num: 6, title: "PR Creation" }`.
 
 <!-- IF WORKSPACE_MODE -->
 **Workspace mode:** Validate, push, and create PRs for all affected repos in
@@ -1947,73 +1564,34 @@ per-repo loops above.
 
 ### 6a. Validate and push
 
-Spawn the git-agent to validate PR readiness:
-
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of git-agent.md as instructions>
-
-    INPUT CONTEXT:
-    {
-      "action": "validate-pr-readiness"
-    }
-  allowedTools:
-    - Bash
-```
+→ spawn git-agent
+  action:  "validate-pr-readiness"
+  tools:   [Bash]
 
 Then sync and push:
 
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of git-agent.md as instructions>
-
-    INPUT CONTEXT:
-    {
-      "action": "sync-and-push",
-      "branch": "<branch name>",
-      "remoteStatus": "<remoteStatus from validate result>"
-    }
-  allowedTools:
-    - Bash
-```
+→ spawn git-agent
+  action:  "sync-and-push"
+  input:   { branch: "<branch name>", remoteStatus: "<remoteStatus from validate result>" }
+  tools:   [Bash]
 
 ### 6b. Create the PR
 
 Delegate to the PR sub-agent. Read the agent instructions from
 `.claude/skills/feature-workflow/agents/pr-agent-ado.md`:
 
-**If gate=mcp:** Call `mcp__bosch__agent_start` with `{ name: "pr-agent-ado", op: "create pull request" }`.
-
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of pr-agent-ado.md as instructions>
-
-    INPUT CONTEXT:
-    {
-      "ticketKey": "<projectKey>-XXXXX",
-      "ticketUrl": "<urlBase>/browse/<projectKey>-XXXXX",
-      "branch": "feature/<projectKey>-XXXXX/short-description",
-      "commitMessage": "<first line of commit message>",
-      "commitBody": "<commit message body>",
-      "testSummary": "<X unit tests passed; live tested POST /api/v1/foo (200), GET /api/v1/bar (200)>",
-      "diffStat": "<summary of changed files>"
-    }
-  allowedTools:
-    - Bash
-    - mcp__azure-devops__repo_create_pull_request
-```
-
-**If gate=mcp:** Call `mcp__bosch__agent_complete` with `{ name: "pr-agent-ado" }`.
+→ spawn pr-agent-ado
+  input:   { ticketKey: "<projectKey>-XXXXX",
+             ticketUrl: "<urlBase>/browse/<projectKey>-XXXXX",
+             branch: "feature/<projectKey>-XXXXX/short-description",
+             commitMessage: "<first line of commit message>",
+             commitBody: "<commit message body>",
+             testSummary: "<X unit tests passed; live tested POST /api/v1/foo (200)>",
+             diffStat: "<summary of changed files>" }
+  tools:   [Bash, mcp__azure-devops__repo_create_pull_request]
 
 The agent will emit a JSON result block. Extract `prUrl` and tell the user.
 
-**If gate=mcp:** Call `mcp__bosch__phase_complete` with `{ num: 6 }`.
 
 Append to the SPAWN_LOG:
 ```
@@ -2021,13 +1599,14 @@ Append to the SPAWN_LOG:
 ```
 In workspace mode with multiple repos, use the actual PR and git-agent spawn counts.
 
+### 6-end. Cost tick → see references/cost-tick.md (label="PR", since=PHASE_6_START)
+
 ---
 <!-- ENDIF -->
 
 <!-- IF REPO_GITHUB -->
 ## Phase 6: PR creation (GitHub)
 
-**If gate=mcp:** Call `mcp__bosch__phase_start` with `{ num: 6, title: "PR Creation" }`.
 
 <!-- IF WORKSPACE_MODE -->
 **Workspace mode:** Validate, push, and create PRs for all affected repos in
@@ -2045,44 +1624,35 @@ Skip the single-repo sections 6a/6b below.
 
 ### 6a. Validate and push
 
-Spawn the git-agent to validate PR readiness and sync-and-push (same as ADO).
+Spawn the git-agent to validate PR readiness and sync-and-push (same as ADO):
+
+→ spawn git-agent
+  action:  "validate-pr-readiness"
+  tools:   [Bash]
+
+→ spawn git-agent
+  action:  "sync-and-push"
+  input:   { branch: "<branch name>", remoteStatus: "<remoteStatus from validate result>" }
+  tools:   [Bash]
 
 ### 6b. Create the PR
 
 Delegate to the GitHub PR sub-agent. Read the agent instructions from
 `.claude/skills/feature-workflow/agents/pr-agent-github.md`:
 
-**If gate=mcp:** Call `mcp__bosch__agent_start` with `{ name: "pr-agent-github", op: "create pull request" }`.
-
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of pr-agent-github.md as instructions>
-
-    INPUT CONTEXT:
-    {
-      "ticketKey": "<projectKey>-XXXXX",
-      "ticketUrl": "<tracker url>/browse/<projectKey>-XXXXX",
-      "branch": "feature/<projectKey>-XXXXX/short-description",
-      "commitMessage": "<first line of commit message>",
-      "commitBody": "<commit message body>",
-      "testSummary": "<X unit tests passed; live tested POST /api/v1/foo (200), GET /api/v1/bar (200)>",
-      "diffStat": "<summary of changed files>"
-    }
-  allowedTools:
-    - Bash
-    - mcp__github__create_pull_request
-    - mcp__github__update_pull_request
-    - mcp__github__get_pull_request
-    - mcp__github__list_workflow_runs
-```
-
-**If gate=mcp:** Call `mcp__bosch__agent_complete` with `{ name: "pr-agent-github" }`.
+→ spawn pr-agent-github
+  input:   { ticketKey: "<projectKey>-XXXXX",
+             ticketUrl: "<tracker url>/browse/<projectKey>-XXXXX",
+             branch: "feature/<projectKey>-XXXXX/short-description",
+             commitMessage: "<first line of commit message>",
+             commitBody: "<commit message body>",
+             testSummary: "<X unit tests passed; live tested POST /api/v1/foo (200)>",
+             diffStat: "<summary of changed files>" }
+  tools:   [Bash, mcp__github__create_pull_request, mcp__github__update_pull_request,
+            mcp__github__get_pull_request, mcp__github__list_workflow_runs]
 
 The agent will emit a JSON result block. Extract `prUrl` and tell the user.
 
-**If gate=mcp:** Call `mcp__bosch__phase_complete` with `{ num: 6 }`.
 
 Append to the SPAWN_LOG:
 ```
@@ -2090,21 +1660,30 @@ Append to the SPAWN_LOG:
 ```
 In workspace mode with multiple repos, use the actual PR and git-agent spawn counts.
 
+### 6-end. Cost tick → see references/cost-tick.md (label="PR", since=PHASE_6_START)
+
 ---
 <!-- ENDIF -->
 
+## Phase 7: Finalize
+
+
 <!-- IF TRACKER_JIRA -->
-## Phase 7: Finalize JIRA
-
-**If gate=mcp:** Call `mcp__bosch__phase_start` with `{ num: 7, title: "Finalize JIRA" }`.
-
 After the PR is created, finalize the JIRA ticket with work logging, cost
-analysis, and status transition. All operations are delegated to the
-jira-agent.
+analysis, and status transition. All operations are delegated to jira-agent.
 
 Read the agent instructions from
 `.claude/skills/feature-workflow/agents/jira-agent.md` once and reuse for
 all spawns in this phase.
+<!-- ENDIF -->
+<!-- IF TRACKER_TR -->
+After the PR is created, finalize the T&R ticket with a cost analysis comment
+and status transition. All operations are delegated to tr-agent.
+
+Read the agent instructions from
+`.claude/skills/feature-workflow/agents/tr-agent.md` once and reuse for
+all T&R spawns in this phase.
+<!-- ENDIF -->
 
 ### 7a. Log implementation work
 
@@ -2115,167 +1694,87 @@ IMPL_END=$(date +%s)
 IMPL_SECONDS=$((IMPL_END - CHECKPOINT))
 ```
 
-Convert to JIRA time format (round to nearest 5 minutes). Then log it:
+Convert to time format (round to nearest 5 minutes; use hours and minutes only).
 
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of jira-agent.md as instructions>
+<!-- IF TRACKER_JIRA -->
+Log the implementation work:
 
-    INPUT CONTEXT:
-    {
-      "action": "addWorklog",
-      "ticketKey": "<ticketKey>",
-      "timeSpent": "<implementation elapsed time in JIRA format>",
-      "comment": "Implementation work"
-    }
-  allowedTools:
-    - mcp__atlassian__addWorklogToJiraIssue
+→ spawn jira-agent
+  action:  "addWorklog"
+  input:   { ticketKey, timeSpent: "<implementation elapsed time>",
+             comment: "Implementation work" }
+  tools:   [mcp__atlassian__addWorklogToJiraIssue]
+<!-- ENDIF -->
+<!-- IF TRACKER_TR -->
+T&R does not support worklog. Hold the elapsed time for the 7b comment:
+
+```bash
+IMPL_ELAPSED="<elapsed time string — e.g., 2h 15m>"
 ```
+<!-- ENDIF -->
 
 ### 7b. Cost analysis comment
 
-Compute the actual session cost autonomously and post it as a JIRA comment.
-
-**Step 1:** Read the pricing reference:
+Read the cost script, computation rules, and comment template:
 
 ```
-Read: .claude/skills/feature-workflow/references/claude-pricing.md
+Read: .claude/skills/feature-workflow/references/phase7-cost-analysis.md
 ```
 
-**Step 2:** Run the JSONL cost script to compute the actual session cost:
+Follow the steps in that file to:
+1. Run `compute-cost.sh` for the full session → hold `ACTUAL_TOTAL`
+2. Read `SESSION_COST_LOG` for per-phase measured costs (P1–P6)
+3. Reconcile `ACTUAL_TOTAL` against the phase sum → compute `ORCH_COST` and optional unaccounted annotation
+4. Compose the cost comment using the template
 
-```bash
-python3 - <<'PYEOF'
-import json, os
-
-path = os.path.expanduser(os.environ.get('SESSION_JSONL_PATH', ''))
-
-RATES = {
-    'claude-sonnet-4-6': {'input': 3.00, 'cw5': 3.75, 'cw1h': 6.00, 'cr': 0.30, 'out': 15.00},
-    'claude-haiku-4-5':  {'input': 1.00, 'cw5': 1.25, 'cw1h': 2.00, 'cr': 0.10, 'out': 5.00},
-    'claude-opus-4-7':   {'input': 5.00, 'cw5': 6.25, 'cw1h': 10.00, 'cr': 0.50, 'out': 25.00},
-}
-DEFAULT = RATES['claude-sonnet-4-6']
-
-if not path or not os.path.exists(path):
-    print('ACTUAL_TOTAL=unavailable (session log not found)')
-else:
-    total = 0.0
-    with open(path) as f:
-        for line in f:
-            try:
-                e = json.loads(line.strip())
-            except Exception:
-                continue
-            usage = e.get('usage') or {}
-            if not usage:
-                continue
-            m = e.get('model', '')
-            r = next((v for k, v in RATES.items() if k in m), DEFAULT)
-            cc = e.get('cache_creation') or {}
-            cost = (
-                usage.get('input_tokens', 0) * r['input'] +
-                (cc.get('ephemeral_5m_input_tokens', 0) if isinstance(cc, dict) else 0) * r['cw5'] +
-                (cc.get('ephemeral_1h_input_tokens', 0) if isinstance(cc, dict) else 0) * r['cw1h'] +
-                usage.get('cache_read_input_tokens', 0) * r['cr'] +
-                usage.get('output_tokens', 0) * r['out']
-            ) / 1_000_000
-            total += cost
-    print(f'ACTUAL_TOTAL=${total:.2f}')
-PYEOF
-```
-
-Hold the printed `ACTUAL_TOTAL` value from the script output.
-
-**Step 3:** Compute per-phase cost estimates and orchestrator remainder from the SPAWN_LOG:
-
-For each phase (1–6), sum `spawns × mid-range profile cost` across all agents logged for that
-phase using the agent profiles from `claude-pricing.md`. If a phase has no SPAWN_LOG entries,
-its estimate is `$0.00`. Format all dollar values to two decimal places.
-
-```
-P1_COST = Σ(spawns × profile) for all phase-1 agents (or $0.00 if none)
-P2_COST = Σ(spawns × profile) for all phase-2 agents (or $0.00 if none)
-P3_COST = Σ(spawns × profile) for all phase-3 agents (or $0.00 if none)
-P4_COST = Σ(spawns × profile) for all phase-4 agents (or $0.00 if none)
-P5_COST = Σ(spawns × profile) for all phase-5 agents (or $0.00 if none)
-P6_COST = Σ(spawns × profile) for all phase-6 agents (or $0.00 if none)
-ORCH_COST = max(0, ACTUAL_TOTAL − (P1_COST + P2_COST + P3_COST + P4_COST + P5_COST + P6_COST))
-```
-
-If `Σ(P1..P6) > ACTUAL_TOTAL` (profiles overestimated), set `ORCH_COST = $0.00` and hold a flag
-to append `(sub-agent profiles overestimated; orchestrator cost absorbed)` to the footnote.
-
-Determine ticket batch context: `TICKET_N` (this ticket's 1-based index in the batch) and
-`TICKET_TOTAL` (total tickets sharing this session). For a single-ticket run use `TICKET_N = 1`,
-`TICKET_TOTAL = 1`. Compute `SHARE = ACTUAL_TOTAL / TICKET_TOTAL` (formatted to two decimal places).
-
-**Step 4:** Compose the JIRA comment:
+<!-- IF TRACKER_TR -->
+Before composing the comment, prepend a time summary block:
 
 ```markdown
-## AI-Assisted Development — Cost Analysis
-
-**Session total:** $<ACTUAL_TOTAL>
-**This ticket's share:** $<SHARE> (<TICKET_N> of <TICKET_TOTAL>)
-
-### Per-phase cost
-
-- Phase 1 — Spec + Plan: $<P1_COST>
-- Phase 2 — Branch: $<P2_COST>
-- Phase 3 — Implement: $<P3_COST>
-- Phase 4 — Commit: $<P4_COST>
-- Phase 5 — Review: $<P5_COST>
-- Phase 6 — PR: $<P6_COST>
-- Orchestrator: $<ORCH_COST>
-
-> Estimated from session token log. Phase 7 finalization not included.
-```
-
-(If ORCH_COST was clamped to $0.00, append ` (sub-agent profiles overestimated; orchestrator cost absorbed)` to the footnote.)
-
-**Step 5:** Post the comment:
+**Refinement time:** <REFINEMENT_ELAPSED>
+**Implementation time:** <IMPL_ELAPSED>
 
 ```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of jira-agent.md as instructions>
 
-    INPUT CONTEXT:
-    {
-      "action": "addComment",
-      "ticketKey": "<ticketKey>",
-      "commentBody": "<composed cost analysis comment>"
-    }
-  allowedTools:
-    - mcp__atlassian__addCommentToJiraIssue
-```
+(This ensures time data is recorded since T&R v1 does not support worklog entries.)
+<!-- ENDIF -->
+
+<!-- IF TRACKER_JIRA -->
+Post the comment:
+
+→ spawn jira-agent
+  action:  "addComment"
+  input:   { ticketKey, commentBody: "<composed cost analysis comment>" }
+  tools:   [mcp__atlassian__addCommentToJiraIssue]
+<!-- ENDIF -->
+<!-- IF TRACKER_TR -->
+Post the comment:
+
+→ spawn tr-agent
+  action:  "addComment"
+  input:   { ticketKey, commentBody: "<time summary + cost analysis comment>" }
+  tools:   [mcp__bosch-jira-mcp__jira_add_comment]
+<!-- ENDIF -->
 
 ### 7c. Transition to success state
 
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of jira-agent.md as instructions>
+<!-- IF TRACKER_JIRA -->
+→ spawn jira-agent
+  action:  "transition"
+  input:   { ticketKey, lifecycleState: "success" }
+  tools:   [mcp__atlassian__getTransitionsForJiraIssue, mcp__atlassian__transitionJiraIssue]
+<!-- ENDIF -->
+<!-- IF TRACKER_TR -->
+→ spawn tr-agent
+  action:  "transition"
+  input:   { ticketKey, lifecycleState: "success" }
+  tools:   [mcp__bosch-jira-mcp__jira_transition]
+<!-- ENDIF -->
 
-    INPUT CONTEXT:
-    {
-      "action": "transition",
-      "ticketKey": "<ticketKey>",
-      "lifecycleState": "success"
-    }
-  allowedTools:
-    - mcp__atlassian__getTransitionsForJiraIssue
-    - mcp__atlassian__transitionJiraIssue
-```
-
-**If gate=mcp:** Call `mcp__bosch__phase_complete` with `{ num: 7 }`.
 
 ### Final report to user
 
+<!-- IF TRACKER_JIRA -->
 After Phase 7 completes, tell the user:
 - The PR URL
 - The JIRA ticket URL (now in the success state)
@@ -2284,140 +1783,14 @@ After Phase 7 completes, tell the user:
 - The actual session cost
 - A reminder to request reviewers if needed
 <!-- ENDIF -->
-
 <!-- IF TRACKER_TR -->
-## Phase 7: Finalize T&R
-
-**If gate=mcp:** Call `mcp__bosch__phase_start` with `{ num: 7, title: "Finalize T&R" }`.
-
-After the PR is created, finalize the T&R ticket with a cost analysis comment
-and status transition.
-
-Read the agent instructions from
-`.claude/skills/feature-workflow/agents/tr-agent.md` once and reuse for
-all T&R spawns in this phase.
-
-### 7b. Cost analysis comment
-
-Run the JSONL cost script to compute the actual session cost (reference `SESSION_JSONL_PATH` captured at Phase 1 kickoff):
-
-```bash
-python3 - <<'PYEOF'
-import json, os
-
-path = os.path.expanduser(os.environ.get('SESSION_JSONL_PATH', ''))
-
-RATES = {
-    'claude-sonnet-4-6': {'input': 3.00, 'cw5': 3.75, 'cw1h': 6.00, 'cr': 0.30, 'out': 15.00},
-    'claude-haiku-4-5':  {'input': 1.00, 'cw5': 1.25, 'cw1h': 2.00, 'cr': 0.10, 'out': 5.00},
-    'claude-opus-4-7':   {'input': 5.00, 'cw5': 6.25, 'cw1h': 10.00, 'cr': 0.50, 'out': 25.00},
-}
-DEFAULT = RATES['claude-sonnet-4-6']
-
-if not path or not os.path.exists(path):
-    print('ACTUAL_TOTAL=unavailable (session log not found)')
-else:
-    total = 0.0
-    with open(path) as f:
-        for line in f:
-            try:
-                e = json.loads(line.strip())
-            except Exception:
-                continue
-            usage = e.get('usage') or {}
-            if not usage:
-                continue
-            m = e.get('model', '')
-            r = next((v for k, v in RATES.items() if k in m), DEFAULT)
-            cc = e.get('cache_creation') or {}
-            cost = (
-                usage.get('input_tokens', 0) * r['input'] +
-                (cc.get('ephemeral_5m_input_tokens', 0) if isinstance(cc, dict) else 0) * r['cw5'] +
-                (cc.get('ephemeral_1h_input_tokens', 0) if isinstance(cc, dict) else 0) * r['cw1h'] +
-                usage.get('cache_read_input_tokens', 0) * r['cr'] +
-                usage.get('output_tokens', 0) * r['out']
-            ) / 1_000_000
-            total += cost
-    print(f'ACTUAL_TOTAL=${total:.2f}')
-PYEOF
-```
-
-Hold the printed `ACTUAL_TOTAL` value. Compute per-phase cost estimates and orchestrator remainder
-from the SPAWN_LOG (same method as JIRA path: spawns × mid-range profile per phase, orchestrator =
-`max(0, ACTUAL_TOTAL − Σphase_estimates)`).
-
-Determine `TICKET_N`, `TICKET_TOTAL`, and `SHARE` as in the JIRA path.
-
-Compose the cost comment (identical shape to the JIRA path):
-
-```markdown
-## AI-Assisted Development — Cost Analysis
-
-**Session total:** $<ACTUAL_TOTAL>
-**This ticket's share:** $<SHARE> (<TICKET_N> of <TICKET_TOTAL>)
-
-### Per-phase cost
-
-- Phase 1 — Spec + Plan: $<P1_COST>
-- Phase 2 — Branch: $<P2_COST>
-- Phase 3 — Implement: $<P3_COST>
-- Phase 4 — Commit: $<P4_COST>
-- Phase 5 — Review: $<P5_COST>
-- Phase 6 — PR: $<P6_COST>
-- Orchestrator: $<ORCH_COST>
-
-> Estimated from session token log. Phase 7 finalization not included.
-```
-
-(If ORCH_COST was clamped to $0.00, append ` (sub-agent profiles overestimated; orchestrator cost absorbed)` to the footnote.)
-
-Post the comment via tr-agent:
-
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of tr-agent.md as instructions>
-
-    INPUT CONTEXT:
-    {
-      "action": "addComment",
-      "ticketKey": "<ticketKey>",
-      "commentBody": "<composed cost analysis comment>"
-    }
-  allowedTools:
-    - mcp__bosch-jira-mcp__jira_add_comment
-```
-
-### 7c. Transition to success state
-
-```
-Tool: Agent
-Parameters:
-  prompt: |
-    <paste the full contents of tr-agent.md as instructions>
-
-    INPUT CONTEXT:
-    {
-      "action": "transition",
-      "ticketKey": "<ticketKey>",
-      "lifecycleState": "success"
-    }
-  allowedTools:
-    - mcp__bosch-jira-mcp__jira_transition
-```
-
-**If gate=mcp:** Call `mcp__bosch__phase_complete` with `{ num: 7 }`.
-
-### Final report to user
-
 After Phase 7 completes, tell the user:
 - The PR URL
 - The T&R ticket URL (now in the success state)
 - A brief summary of what was implemented
 - Test results (from the test summary built in Phase 3)
 - The actual session cost
-- T&R v1 reminder: no worklog (time is not posted to Jira — neither via worklog nor folded into a comment)
+- T&R v1 reminder: no worklog — time data (refinement + implementation elapsed) is included in the cost analysis comment body
 - A reminder to request reviewers if needed
 <!-- ENDIF -->
 
@@ -2455,7 +1828,7 @@ After Phase 7 completes, tell the user:
 | 7c Transition | **jira-agent** (Haiku) | Move ticket to success state | — |
 <!-- ENDIF -->
 <!-- IF TRACKER_TR -->
-| 7b Cost | **tr-agent** (Haiku) | Post cost analysis comment | — |
+| 7b Cost | **tr-agent** (Haiku) | Post time data + cost analysis comment | — |
 | 7c Transition | **tr-agent** (Haiku) | Move ticket to success state | — |
 <!-- ENDIF -->
 

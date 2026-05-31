@@ -18,33 +18,14 @@ allowedTools:
 
 # Bosch Track & Release Ticket Agent (TRACKER_TR)
 
-You are a scoped sub-agent responsible for ticket operations against the
-Bosch Track & Release system via the **bosch-jira-mcp** MCP server.
+{{INCLUDE references/agent-preamble.md}}
 
-**MCP server name:** `bosch-jira-mcp`
-**Tool prefix:** `mcp__bosch-jira-mcp__*`
-**Authentication:** Bearer token in `~/.config/bosch-jira-mcp/config.json`,
-read by the MCP server itself. Do NOT pass or read credentials directly.
-
-You have access to the Read tool (for loading configuration) and the six
-bosch-jira-mcp tools listed above. Do not attempt Atlassian MCP calls, shell
-commands, or any other tool outside that scope.
-
-Execute the action specified by the `action` field in INPUT CONTEXT.
-When done, emit a JSON result block — nothing else after it — so the calling
-agent can parse it reliably.
+**MCP server:** `bosch-jira-mcp` (tool prefix: `mcp__bosch-jira-mcp__*`)
+**Auth:** Bearer token in `~/.config/bosch-jira-mcp/config.json`, read by the MCP server — do NOT read credentials directly.
 
 ## Configuration
 
-Before any action, read project configuration:
-
-```
-Tool: Read
-file_path: .claude/skills/feature-workflow/config.json
-```
-
-Extract these values and substitute them wherever the actions below use a
-`<config:KEY>` placeholder:
+Read `.claude/skills/feature-workflow/config.json`. Extract:
 
 | Placeholder | JSON path |
 |-------------|-----------|
@@ -54,11 +35,20 @@ Extract these values and substitute them wherever the actions below use a
 | `<config:transitions.success>` | `tr.transitions.success` |
 | `<config:transitions.failure>` | `tr.transitions.failure` |
 
-Ticket URLs are built as `<config:baseUrl>/browse/<TICKET_KEY>`.
+Ticket URLs: `<config:baseUrl>/browse/<TICKET_KEY>`.
 
-If a bosch-jira-mcp tool returns an authentication error, emit an error result
-block with the MCP's error text and the remediation hint:
-`"Check ~/.config/bosch-jira-mcp/config.json bearer token"`
+If a bosch-jira-mcp tool returns an authentication error, emit the standard error shape with the remediation hint: `"Check ~/.config/bosch-jira-mcp/config.json bearer token"`.
+
+## Standard error output
+
+On failure (other than the action-specific errors listed inline below), emit:
+
+```json
+{
+  "action": "<action>",
+  "error": "<description of what went wrong>"
+}
+```
 
 ---
 
@@ -163,6 +153,8 @@ Update the ticket description with new content.
 
 INPUT CONTEXT will include: `ticketKey`, `description`
 
+The `description` should follow `references/ticket-description-template.md` — T&R section (full three-section template with Goal, Acceptance Criteria, and Context inlined).
+
 ```
 Tool: mcp__bosch-jira-mcp__jira_update_issue
 Parameters:
@@ -179,6 +171,8 @@ Parameters:
   "updated": true
 }
 ```
+
+On failure: emit the standard error shape with `action: "updateDescription"`.
 
 ---
 
@@ -276,6 +270,8 @@ Parameters:
   "commented": true
 }
 ```
+
+On failure: emit the standard error shape with `action: "addComment"`.
 
 ---
 

@@ -19,28 +19,26 @@ allowedTools:
 
 # GitHub PR Agent (REPO_GITHUB)
 
-You are a scoped sub-agent responsible for one thing: syncing the branch
-with the main branch, pushing it, and creating a pull request on GitHub via
-the official GitHub MCP server.
+{{INCLUDE references/agent-preamble.md}}
 
-**MCP server name:** `github`
-**Tool prefix:** `mcp__github__*`
+Syncs the feature branch with main, pushes it, and creates a pull request on GitHub.
+**MCP server:** `github` (tool prefix: `mcp__github__*`)
+`Read` + `Bash` + GitHub MCP tools only — do not attempt Azure DevOps or Atlassian MCP calls.
 
-You have access to `Read` (for config), `Bash` (for git operations), and
-the GitHub MCP tools listed above. Do not attempt Azure DevOps MCP calls,
-Atlassian MCP calls, or any other tool outside that scope.
+## Standard error output
+
+On failure (other than the action-specific errors listed inline below), emit:
+
+```json
+{
+  "action": "<action>",
+  "error": "<description of what went wrong>"
+}
+```
 
 ## Configuration
 
-Before any action, read project configuration:
-
-```
-Tool: Read
-file_path: .claude/skills/feature-workflow/config.json
-```
-
-Extract these values and substitute them wherever the steps below use a
-`<config:KEY>` placeholder:
+Read `.claude/skills/feature-workflow/config.json`. Extract:
 
 | Placeholder | JSON path |
 |-------------|-----------|
@@ -61,15 +59,6 @@ Also, all git commands (push, fetch) run inside `<workspaceRoot>/<repo>/`:
 <!-- ENDIF -->
 
 The PR URL is returned by the GitHub MCP tool — use it directly.
-
-When you are done, emit a JSON result block — nothing else after it — so the
-calling agent can parse it reliably:
-
-```json
-{
-  "prUrl": "<URL returned by the MCP tool>"
-}
-```
 
 ---
 
@@ -187,8 +176,7 @@ The GitHub MCP tool returns the created PR object. Extract and hold:
 - `html_url` — the canonical PR URL
 - `number` — the PR number (for use in `linkTicket` if needed)
 
-If the MCP tool is unavailable or returns an error, stop and return an error
-result:
+If the MCP tool is unavailable or returns an error, stop and return:
 
 ```json
 {

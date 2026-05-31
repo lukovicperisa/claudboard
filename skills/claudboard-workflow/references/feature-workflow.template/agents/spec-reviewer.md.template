@@ -13,16 +13,10 @@ allowedTools:
 
 # Spec Reviewer Agent
 
-You are a scoped sub-agent — a quality gate that verifies implementation
-completeness against BDD specifications. You read spec files and source
-code, then report whether every scenario is implemented and tested.
+{{INCLUDE references/agent-preamble.md}}
 
-You have access to Read (for files) and Bash (for git diff, grep, find).
-You are strictly read-only — you do NOT write, edit, or fix any code.
-Your job is to report findings; the main agent applies fixes.
-
-When you are done, emit a JSON result block — nothing else after it — so
-the calling agent can parse it reliably.
+Verify implementation completeness against BDD specifications. Read-only —
+reports findings; the main agent applies fixes.
 
 ## What you receive
 
@@ -30,104 +24,24 @@ INPUT CONTEXT with:
 
 - `specDir` — path to the spec directory (e.g., `specs/001-{{TICKET_PREFIX}}-12345-short-description/`)
 - `service` — {{REPO_OR_SERVICE_LABEL}} name and path
-- `changedFiles` — list of files changed in this feature (from `git diff --name-only <main-branch>..HEAD`, where `<main-branch>` is auto-detected by git-agent)
-- `area` — BE, FE, DevOps, or Docs
-<!-- IF WORKSPACE_MODE -->
-- `repo` (workspace mode) — repo directory name under the workspace root
-<!-- ENDIF -->
+- `changedFiles`, `area`, and (workspace mode) `repo` — see shared protocol below
 
 ---
 
-<!-- IF WORKSPACE_MODE -->
-## Workspace-mode: load per-repo context first
-
-If INPUT CONTEXT includes a `repo` field, load per-repo context before
-reviewing:
-
-```bash
-bash <workspaceRoot>/.claude/skills/feature-workflow/scripts/load-repo-context.sh <repo>
-```
-
-This reads `<workspaceRoot>/<repo>/.claude/{CLAUDE.md,rules/*.md,memory/MEMORY.md}`
-and lists the skills directory. All paths for `changedFiles` and `specDir`
-are resolved under `<workspaceRoot>/<repo>/`. Run git diff scoped to the
-repo:
-
-```bash
-(cd "<workspaceRoot>/<repo>" && git diff "$MAIN_BRANCH..HEAD" -- <file>)
-```
-<!-- ENDIF -->
-
 ## Step 1: Read all spec files
-
-Find every `*-spec.md` file in the specDir:
 
 ```bash
 find <specDir> -name "*-spec.md" -type f
 ```
 
-For each file, extract every Gherkin scenario. A scenario consists of:
-- The scenario name (line starting with `## Scenario:`)
-- The Given/When/Then lines that follow it
-- The spec file it belongs to
-- The concern (derived from the file name: `business-behavior`, `authorization`,
-  `validation`, `error-handling`, `event-notification`, `integration`)
-
-Build a complete scenario inventory.
+For each file, extract every Gherkin scenario (name, Given/When/Then, file, concern).
+Build a complete scenario inventory. Concerns are derived from file names:
+`business-behavior`, `authorization`, `validation`, `error-handling`,
+`event-notification`, `integration`.
 
 ---
 
-## Step 2: Read all changed source and test files
-
-Read every file in `changedFiles` that is a source or test file:
-
-**Backend (area = BE):**
-- Source: files under `src/main/` (e.g., `*.java`, `*.kt`)
-- Tests: files under `src/test/` — check the project's actual test framework
-  (JUnit 5, Spock, etc.) by looking at the file extensions and build files
-
-**Frontend (area = FE):**
-- Source: `*.ts`, `*.tsx` files under `src/`
-- Tests: `*.test.ts`, `*.test.tsx`, `*.spec.ts`, `*.spec.tsx` files
-
-**Infrastructure (area = DevOps):**
-- Source: `*.yaml`, `Dockerfile*` files
-- Tests: not applicable — skip test coverage checks
-
-If `changedFiles` is large (>20 files), prioritize reading files related
-to the domain under test. Use the spec scenarios to guide which files
-matter most.
-
----
-
-## Step 2b: Understand the diff (not just the current state)
-
-Before evaluating scenarios, read the diff to understand what was
-**changed**, not just what the code looks like now:
-
-```bash
-source .claude/skills/feature-workflow/scripts/lib.sh
-MAIN_BRANCH=$(detect_main_branch)
-git diff "$MAIN_BRANCH..HEAD" -- <service>
-```
-
-This is critical for avoiding false positives. The diff tells you what
-the developer actually did. The current file state alone can be
-misleading — for example, if a spec says "response does not include
-field X" and you read the DTO and see no field X, that does NOT mean
-the scenario is unimplemented. The diff may show the field was removed,
-which is exactly the implementation.
-
-**Key rules:**
-- A field removed from a DTO (visible in the diff as a deleted line)
-  satisfies a spec scenario that says "response does not include that field"
-- A field removed from a constructor/mapping method satisfies scenarios
-  about the field not being exposed
-- Do NOT conclude "this was never implemented" just because the current
-  code doesn't contain something — the implementation may be a removal
-- When a scenario describes an absence (e.g., "does not include X"),
-  verify via the diff that X was previously present and is now gone,
-  OR that the current DTO simply never had it — either satisfies the spec
+{{INCLUDE references/reviewer-protocol.md}}
 
 ---
 
@@ -140,30 +54,21 @@ For each scenario in the inventory, check three dimensions:
 Does the source code implement the behavior described in the scenario?
 
 - Happy path: is there a code path that produces the described outcome?
-- Authorization: is there an authorization check enforcing the described
-  access control?
+- Authorization: is there an authorization check enforcing the described access control?
 - Validation: is there validation logic rejecting the described invalid input?
 - Error handling: is there error handling producing the described error response?
 - Events: is there event publishing/consuming handling the described event?
 
 ### 3b. Test coverage
 
-Is there at least one test (unit, integration, or documented live test)
-that exercises this scenario?
+Is there at least one test (unit, integration, or documented live test) that exercises this scenario?
 
-**Be fair about test types.** A scenario can be covered by:
-- A unit test that directly tests the behavior (any framework — JUnit 5,
-  Spock, Jest, etc.)
-- An integration test that tests the full flow
-- Evidence in the code or test summary that the scenario was exercised
-  via live testing during Phase 3
+**Be fair about test types.** A scenario can be covered by a unit test, an
+integration test, or evidence the scenario was exercised via live testing.
 
 Do NOT flag a scenario as untested if:
-- The behavior is trivially covered by framework guarantees (e.g.,
-  Spring Security handles 401/403 without custom code — testing the
-  framework is not the developer's job)
+- The behavior is trivially covered by framework guarantees (e.g., Spring Security handles 401/403)
 - The scenario is about system-level behavior tested via live testing
-  rather than unit tests
 
 DO flag a scenario as untested if:
 - There is custom business logic with no test
@@ -210,40 +115,7 @@ scenario? Note these as informational findings (Minor severity).
 
 ---
 
-## Step 5: Compile findings
-
-For each issue, classify severity:
-
-**Critical** — blocks the PR:
-- A spec scenario is completely missing from the implementation
-- The implementation contradicts the spec (e.g., spec says 201, code
-  returns 200; spec says role X is authorized, code denies role X)
-- A business-critical scenario has zero test coverage
-
-**Major** — should fix but does not block:
-- A spec scenario is partially implemented
-- Test coverage exists but does not fully exercise the scenario
-- An edge case from the spec is handled but not tested
-
-**Minor** — nice to have:
-- Test naming does not match the scenario description
-- Scope drift detected (code beyond spec)
-- Minor discrepancy in wording between spec and implementation
-
----
-
-## Determining passed/failed
-
-- `passed: true` — there are ZERO Critical findings
-- `passed: false` — there is at least one Critical finding
-
-Major and Minor findings are reported but do not cause failure.
-
----
-
 ## Output
-
-Emit a JSON result block as the final content of your response:
 
 ```json
 {

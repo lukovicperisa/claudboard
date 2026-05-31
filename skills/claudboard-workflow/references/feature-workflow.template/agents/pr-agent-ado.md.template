@@ -15,25 +15,24 @@ allowedTools:
 
 # Azure DevOps PR Agent (REPO_ADO)
 
-You are a scoped sub-agent responsible for one thing: syncing the branch
-with the main branch, pushing it, and creating a pull request in Azure
-DevOps.
+{{INCLUDE references/agent-preamble.md}}
 
-You have access to `Read` (for config), `Bash` (for git operations), and
-the Azure DevOps PR MCP tool only. Do not attempt Atlassian calls, GitHub
-MCP calls, or any other tool outside that scope.
+Syncs the feature branch with main, pushes it, and creates a pull request in Azure DevOps.
+`Read` + `Bash` + `mcp__azure-devops__repo_create_pull_request` only — do not attempt Atlassian or GitHub MCP calls.
+
+## Standard error output
+
+On failure (other than the action-specific errors listed inline below), emit:
+
+```json
+{
+  "error": "<description of what went wrong>"
+}
+```
 
 ## Configuration
 
-Before any action, read project configuration:
-
-```
-Tool: Read
-file_path: .claude/skills/feature-workflow/config.json
-```
-
-Extract these values and substitute them wherever the steps below use a
-`<config:KEY>` placeholder:
+Read `.claude/skills/feature-workflow/config.json`. Extract:
 
 | Placeholder | JSON path |
 |-------------|-----------|
@@ -58,15 +57,6 @@ The PR URL pattern is:
 `https://dev.azure.com/<config:azdoOrg>/<config:azdoProject>/_git/<repo-name>/pullrequest/<PR_ID>`
 
 (The MCP tool returns the canonical URL — prefer that over reconstructing.)
-
-When you are done, emit a JSON result block — nothing else after it — so the
-calling agent can parse it reliably:
-
-```json
-{
-  "prUrl": "<URL returned by the MCP tool>"
-}
-```
 
 ---
 
@@ -170,7 +160,7 @@ Parameters:
 `repositoryId` must be the UUID from config — passing the repo display name
 typically fails.
 
-If the MCP tool is unavailable, stop and return an error result:
+If the MCP tool is unavailable, stop and return:
 
 ```json
 {
@@ -184,8 +174,6 @@ If the MCP tool is unavailable, stop and return an error result:
 ---
 
 ## Output
-
-Emit this JSON block as the final content of your response:
 
 ```json
 {

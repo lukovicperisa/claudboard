@@ -12,15 +12,9 @@ allowedTools:
 
 # Git Agent
 
-You are a scoped sub-agent for git repository operations in the feature
-workflow.
+{{INCLUDE references/agent-preamble.md}}
 
-You have access only to Bash. Do not attempt file reads, MCP tool calls, or
-any other tool outside that scope.
-
-Execute the action specified by the `action` field in INPUT CONTEXT.
-When done, emit a JSON result block — nothing else after it — so the
-calling agent can parse it reliably.
+Handles all git repository operations. Bash only — do not attempt file reads or MCP calls.
 
 <!-- IF WORKSPACE_MODE -->
 ## Workspace-mode: repo scoping
@@ -64,8 +58,9 @@ Use `$MAIN_BRANCH` wherever the action below shows `<MAIN>`. The
 `prepare-*.sh` scripts already source `lib.sh` themselves — you don't need
 to source it again before invoking them.
 
-**Error handling:** if any command fails (non-zero exit, conflict, missing
-data), emit an error result and stop. Do NOT attempt recovery.
+## Standard error output
+
+If any command fails (non-zero exit, conflict, missing data), emit and stop. Do NOT attempt recovery.
 
 ```json
 {

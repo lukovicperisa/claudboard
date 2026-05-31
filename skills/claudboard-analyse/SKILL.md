@@ -258,135 +258,70 @@ Skip: `node_modules/`, `.git/`, `dist/`, `build/`, `target/`, `__pycache__/`, `.
 
 ---
 
-### 1c. Wide Scan (pattern inventory)
+### 1c. Discovery (wide scan + anti-patterns)
 
-**Skip if repo has <50 source files** — read all source files directly in step 1d instead.
+**Skip if repo has <50 source files** — read all source files directly in step 1d instead (skip the bash script invocation; go straight to 1d).
 
-**In monorepo mode:** scope all grep and find commands to the current service's directory (e.g., `find order-service/src/main -name '*.java'` not `find . -name '*.java'`). Each service gets its own Pattern Inventory.
+**In monorepo mode:** invoke the script once per service directory. Each service gets its own Pattern Inventory.
 
-Run grep-based scans across the entire repo before reading any source file fully. Load the language-specific file from `../claudboard/references/` (e.g., `stack-detectors-java.md` for Java/Kotlin projects, `stack-detectors-typescript.md` for TypeScript/JavaScript, etc.) for exact grep commands per language. Each file contains 7 categories: custom patterns, anti-patterns, conventions, security, API surface, observability, and dependencies. If any category returns 0 results, record "none detected" and continue with other categories.
+Run `bash scripts/discover.sh <repo-path>` as a **single tool call**, where `<repo-path>` is:
+- **Single-project:** the repo root
+- **Monorepo:** each service directory individually (after the global 1b scan)
+- **Workspace sub-agent:** the repo path scoped to this agent's assigned repo
 
-Run in parallel:
+> **Schema assertion:** read `schema_version` from the JSON. If it does not equal `"1"`, stop immediately and report:
+> `"discover.sh schema mismatch: got {observed}, expected 1. Check that scripts/discover.sh and this SKILL.md are at the same version (see scripts/schema/discover-v1.md for the bump procedure)."`
 
-**Inheritance & abstraction map** (find project-specific patterns):
-```
-# Custom annotations (project-specific!)
-grep -rn '@interface' --include='*.java' src/
-grep -rn '@interface' --include='*.kt' src/
+The JSON provides the Pattern Inventory for all subsequent phases:
 
-# Abstract base classes
-grep -rn '^public abstract class\|^abstract class' --include='*.java' src/
+| JSON field | Used for |
+|---|---|
+| `repo.source_file_count` | Skip 1c when < 50; skip 1g when < 30 |
+| `wide_scan.skill_triggers` | Trigger → count + best_example; drive 1d file selection |
+| `wide_scan.anti_patterns` | Flag in Phase 2 Watch; combine with 1f call-path findings |
+| `wide_scan.conventions` | di_style, logging — confirm in 1d, record in Phase 2 |
+| `wide_scan.god_class_candidates` | Priority files for 1d; "Complex business" path entry in 1f |
+| `wide_scan.inheritance_map` | 1d abstract base class reads; workflow candidate detection |
+| `duplication.candidates` | Phase 2 "Code duplication" line ([] when count < 30 — see 1g) |
+| `ref_load_signals` | Which reference files to load (see Reference Load Gates below) |
 
-# Who extends what (inheritance tree)
-grep -rn 'extends ' --include='*.java' src/ | grep -v '//' | grep -v 'test\|Test'
+**Still run manually (not covered by the script):**
+- Project-specific workflows: read `README.md` "Getting Started"/"Contributing"; check `docs/adr/` or `ADR/`
+- From `wide_scan.inheritance_map`: if a base class has 5+ subclasses, examine the most recent (by git log) to reconstruct the "add a new X" workflow — strong skill candidate
+- Security, API surface, and observability interpretation: the script counts the signals; load the language-specific `stack-detectors-{lang}.md` for interpretation context (the file is already loaded at the start of Phase 1)
 
-# TypeScript
-grep -rn 'abstract class\|extends ' --include='*.ts' src/
+#### Reference Load Gates
 
-# Python
-grep -rn 'class.*ABC\|class.*Protocol\|class.*BaseModel' --include='*.py' src/
-```
+After reading the discovery JSON, load these reference files **only when the signal is `true`**:
 
-Tally results: if N >= 3 classes extend the same base class → **that base class is a skill candidate**. If a custom annotation appears on 3+ classes → **that annotation is a rule candidate**.
+| Signal | Reference file | Load when |
+|---|---|---|
+| `ref_load_signals.messaging` | `../claudboard/references/edges/messaging.md` | any Kafka/AMQP/JMS/SNS/SQS/Solace/RabbitMQ marker found |
+| `ref_load_signals.streaming` | `../claudboard/references/edges/streaming.md` | any WebSocket/SSE/RSocket marker found |
+| `ref_load_signals.graphql` | `../claudboard/references/edges/graphql.md` | any GraphQL/Apollo marker found |
+| `ref_load_signals.architectural` | `../claudboard/references/patterns/architectural.md` | any Saga/CQRS/Outbox/EventStore marker found |
 
-**Project-specific workflows** (highest-value patterns — invisible to grep):
-- Read `README.md` "Getting Started"/"Contributing" sections for documented rituals
-- Check `docs/adr/` or `ADR/` for architecture decision records describing multi-step workflows
-- From inheritance map: if a base class has 5+ subclasses, examine the most recent (by git log) to reconstruct the "add a new X" workflow — strong skill candidate
-- Record: workflow name → steps → files involved → "discovered from [source]"
+`workflow-signals.md` is **always** loaded (dispatcher schema). `edges/sync-rpc.md` is **always** loaded in workspace mode for REST/gRPC edge detection.
 
-**Skill trigger signals** (full catalog — run all in parallel):
-```
-# Java / Spring
-@RestController, @Controller, @FeignClient
-@KafkaListener, @KafkaHandler, @RabbitListener
-@Repository, @Document (MongoDB)
-@Scheduled, @EnableScheduling
-@Async, @EnableAsync, CompletableFuture
-@EventListener, ApplicationEvent
-@Aspect, @Around, @Before, @After
-@MessageMapping (WebSocket)
-@GraphQlController, @QueryMapping, @MutationMapping
-@ShellComponent (Spring Shell CLI)
-implements Validator, ConstraintValidator (custom validators)
-SecurityFilterChain, @EnableMethodSecurity
-@FeignClient
+#### Fallback (discover.sh unavailable)
 
-# Frontend (TypeScript/React)
-useQuery, useMutation (React Query)
-useState, useEffect (custom hook signal)
-react-hook-form, useForm
-zustand, create( (Zustand)
-createSlice, createAsyncThunk (Redux Toolkit)
-ModuleFederationPlugin (Micro-Frontends)
+If `scripts/discover.sh` is missing or errors (bash unavailable, jq not installed):
 
-# Python
-@app.route, @router.get, @router.post (FastAPI/Flask)
-@tool, tool_use (MCP tools)
-class.*Model (Pydantic)
-class.*Task, @celery.task (Celery)
-
-# Infrastructure
-V\d+__.*\.sql, *.migration.ts (DB migrations)
-charts/, helm/ (Helm)
-Pulumi.yaml, index.ts in env/ (Pulumi IaC)
-```
-
-Record: trigger name → file count → best example file (smallest/cleanest = best template).
-
-**Anti-pattern signals** (whole-repo grep — not just sampled files):
-```
-# God class candidates (>300 LOC in src/main or equivalent)
-find . -name '*.java' -path '*/src/main/*' -not -path '*/test/*' \
-  | xargs wc -l 2>/dev/null | sort -rn | head -20
-
-# Field injection (Java)
-grep -rc '@Autowired' --include='*.java' src/main/
-
-# Broad exception catching
-grep -rn 'catch (Exception\|catch (Throwable' --include='*.java' src/main/
-
-# Null returns
-grep -rn 'return null;' --include='*.java' src/main/
-
-# Reflection in business logic
-grep -rn 'ReflectionUtils\|getDeclaredField\|setAccessible\|Method\.invoke\|ParameterizedType' \
-  --include='*.java' src/main/
-
-# TODO/FIXME/HACK density
-grep -rc 'TODO\|FIXME\|HACK' --include='*.java' --include='*.ts' --include='*.py' src/ \
-  | grep -v ':0$'
-
-# TypeScript `any` usage
-grep -rn '\bany\b\|// @ts-ignore\| as any\b' --include='*.ts' src/
-```
-
-**Convention frequency** (DI style, logging, naming consistency):
-```
-# Java DI ratio
-FIELD_INJ=$(grep -rc '@Autowired' --include='*.java' src/main/ | awk -F: '{s+=$2}END{print s}')
-CONST_DI=$(grep -rc 'private final' --include='*.java' src/main/ | awk -F: '{s+=$2}END{print s}')
-
-# Logging style (Java)
-grep -rl '@Slf4j' --include='*.java' src/ | wc -l
-grep -rl 'LoggerFactory.getLogger' --include='*.java' src/ | wc -l
-```
-
-Also run security, API surface, and observability scans **in the same parallel pass** — these are included in the language-specific file you loaded for Wide Scan patterns (categories 4-6). Record findings alongside anti-patterns.
+1. Run each grep listed in the language-specific `stack-detectors-{lang}.md` Wide Scan section manually
+2. Record trigger counts, anti-pattern counts, and conventions from the grep output
+3. Compute `ref_load_signals` by checking whether any messaging/streaming/graphql/architectural keyword appears in the repo
+4. Proceed with the same Phase 1d onward, using the manually collected data in place of the discovery JSON
 
 **Output: Pattern Inventory** (internal — use it to drive step 1d decisions):
 ```
-inheritance_map: [base class → subclass count + sample files]
-custom_annotations: [annotation name → usage count + files]
-skill_triggers: [trigger → count + best_example file]
-anti_patterns: [type → severity + count + files]
-god_class_candidates: [file → LOC]
-conventions: {di_style, logging, test_naming}
-security: {framework, method_level_auth, cors, custom_auth_annotation, auth_coverage_gap}
-api_surface: {total_endpoints, by_method, versioning, openapi_tooling}
-observability: {actuator, metrics, tracing, structured_logging}
-dependency_deep: {bom, sbom, conflict_resolution, cross_module_mismatches}
-workflows: [workflow name → steps → files → source]
+inheritance_map: [base class → subclass count + sample files]  ← from wide_scan.inheritance_map
+custom_annotations: [annotation name → usage count + files]   ← from wide_scan.skill_triggers
+skill_triggers: [trigger → count + best_example file]         ← from wide_scan.skill_triggers
+anti_patterns: [type → severity + count + files]               ← from wide_scan.anti_patterns
+god_class_candidates: [file → LOC]                            ← from wide_scan.god_class_candidates
+conventions: {di_style, logging, test_naming}                  ← from wide_scan.conventions
+security, api_surface, observability, dependency_deep          ← interpret from trigger counts + stack-detectors-{lang}.md
+workflows: [workflow name → steps → files → source]           ← from README/ADR manual reads
 ```
 
 ### 1d. Strategic sampling
@@ -440,15 +375,17 @@ Check for test framework, test directories, coverage tooling, and whether tests 
 
 File sampling catches naming conventions and structure but misses flow anti-patterns — duplication across call chains, reflection in the hot path, exception handling strategies that only become visible when you follow the full operation.
 
-**Trace 3-5 paths** (not just one). Select based on Wide Scan findings:
+Trace exactly the path types whose "When to include" condition is satisfied by the discovery JSON. Do not pad to a fixed count.
 
 | Path type | When to include | Entry point | What it reveals |
 |-----------|----------------|-------------|-----------------|
 | Simple CRUD | Always | Smallest controller | Happy path, base patterns |
-| Complex business | Always | Method in largest service (God class) | Real complexity, edge cases |
-| Async/event | @Async or @EventListener detected | Async method or listener | Error handling in async, threading |
-| Auth/security | Custom auth annotations detected | Annotated controller → aspect | AOP patterns, security flow |
-| External integration | @FeignClient or HTTP client detected | Client call chain | Resilience, error mapping |
+| Complex business | Always (or skip if `wide_scan.god_class_candidates` is empty) | Method in largest service | Real complexity, edge cases |
+| Async/event | `wide_scan.skill_triggers["@Async"].count > 0` OR `"@EventListener".count > 0` | Async method or listener | Error handling in async, threading |
+| Auth/security | `wide_scan.skill_triggers["SecurityFilterChain"].count > 0` OR any custom auth annotation | Annotated controller → aspect | AOP patterns, security flow |
+| External integration | `wide_scan.skill_triggers["@FeignClient"].count > 0` OR any HTTP client trigger | Client call chain | Resilience, error mapping |
+
+Expected path counts: 2 paths on simple repos, up to 5 on full-feature repos.
 
 For each path, trace end-to-end: controller → service → helpers/callbacks → repository. Read each file in the chain. Record per path:
 
@@ -462,7 +399,9 @@ For each path, trace end-to-end: controller → service → helpers/callbacks �
 
 ### 1g. Duplication detection
 
-After sampling source files, pick 2-3 distinctive code patterns seen in the first files (e.g., a try-catch inside a lambda, a reflection call sequence, a validation block). Grep for them across the codebase. If the same ~5-line pattern appears 3+ times in different files, flag as "copy-paste duplication" in the anti-patterns section.
+**Skip entirely when `repo.source_file_count < 30`** (from discovery JSON). Small repos have insufficient surface area to harbour copy-paste duplication; record `"Code duplication: None detected"` in Phase 2 without running any greps.
+
+For repos ≥ 30 source files: use `duplication.candidates` from the discovery JSON as the primary input — the script pre-computed recurring patterns. If the list is non-empty, review the top candidates by reading the referenced files and confirming they represent genuine duplication (not false-positive regex matches).
 
 Also check for parallel class hierarchies: classes with shared naming patterns (e.g., `Root*Service`, `Branch*Service`, `Leaf*Service`). If found, diff key methods across hierarchies — identical or near-identical method bodies indicate structural duplication.
 
@@ -662,275 +601,17 @@ Load `../claudboard/references/pattern-catalog.md` to identify architecture patt
 
 **For monorepos:** produce one global report section plus one per-service section (same structure). See "Monorepo Report Structure" below.
 
-### Single-project report template
-
-```
-## Project Analysis: <repo-name>
-
-### What (purpose & value)
-<inferred from README, package names, API surface, domain vocabulary in code>
-
-### How (design & patterns)
-- Architecture: <pattern name> — detected from <specific evidence>
-- Build: <commands> — from <source file>
-- Testing: <framework + strategy> — <CI gate status>
-- CI/CD: <platform> — <stages/jobs detected>
-- Deploy: <model> — <IaC tool if detected>
-
-### Why (reasoning behind decisions)
-- <detected constraint → inferred decision>
-  e.g., "Azure Pipelines → team is on Azure; Pulumi TypeScript → IaC in same language as app code"
-
-### Quality Assessment
-
-Score each dimension 1-10 (whole numbers only) using criteria from `../claudboard/references/quality-signals.md`.
-
-**Testing:** [N]/10
-Evidence: [framework, CI gate, coverage %]
-
-**Architecture:** [N]/10
-Evidence: [pattern name, consistency]
-
-**Conventions:** [N]/10
-Evidence: [linting enforcement, DI pattern, god classes, anti-patterns]
-
-**Dependencies:** [N]/10
-Evidence: [versions, BOM status, SBOM, cross-module mismatches]
-
-**CI/CD:** [N]/10
-Evidence: [pipeline stages, quality gates, deploy automation]
-
-**Documentation:** [N]/10
-Evidence: [README, CLAUDE.md, ADRs, inline docs]
-
-**Security:** [N]/10
-Evidence: [framework, method-level auth coverage, CORS, secrets]
-
-**Observability:** [N]/10
-Evidence: [actuator, metrics, tracing, structured logging]
-
-**API Surface:**
-- Controllers: N | Endpoints: ~M (GET:X POST:Y PUT:Z DELETE:W)
-- Versioning: [URL-based v1/v2 / None detected]
-- Documentation: [springdoc-openapi / springfox / None]
-
-**Reflection usage:** [None / Config-only / Business-logic (flag)] — from Phase 1c grep
-**Code duplication:** [None detected / Minor / Structural (parallel hierarchies)] — from Phase 1g
-
-**Quality Score Summary:**
-
-| Dimension | Score | Evidence |
-|-----------|-------|----------|
-| Testing | [N]/10 | [1-line] |
-| Architecture | [N]/10 | [1-line] |
-| Conventions | [N]/10 | [1-line] |
-| Dependencies | [N]/10 | [1-line] |
-| CI/CD | [N]/10 | [1-line] |
-| Documentation | [N]/10 | [1-line] |
-| Security | [N]/10 | [1-line] |
-| Observability | [N]/10 | [1-line] |
-| **Average** | **[X.X]/10** | |
-
-**Adaptive Depth Decision:** [≥7.0 avg] → Full rules | [4.0-6.9 avg] → Medium rules | [<4.0 avg] → Skeleton rules
-
-**Preserve:**
-- <good pattern> — <where found>
-
-**Watch:**
-- [SEVERITY] <anti-pattern> — <file/location>
-Include findings from Phase 1f (call-path tracing) and Phase 1g (duplication detection).
-For severity assignment, use the **Overview** column from `../claudboard-techdebt/references/severity-matrix.md`.
-For reflection or deeply-embedded anti-patterns: note whether they belong
-in conventions rules (actionable today) or tech-debt rules (document but
-can't avoid in current architecture). See pattern-catalog.md →
-"Reflection Anti-Patterns" → "Reporting guidance".
-
-After listing all Watch findings, **apply compound severity rules** from `../claudboard/references/pattern-catalog.md` → "Compound Severity Rules" (analyse-scoped rules):
-- Check each pair of Watch findings against the compound severity table
-- For any matching pair, add a compound entry: `[HIGH — compound] Finding A + Finding B → risk description (individually: severityA + severityB)`
-
-**Debt:**
-- [INFO] <tech debt> — <impact>
-
-### Existing .claude/ Coverage
-[If .claude/ exists:]
-- `<existing rule>` — covers <X>
-- `<existing skill>` — covers <Y>
-
-[If no .claude/:]
-- No existing Claude context found
-
-### Workflow Signals
-
-```yaml
-workflow_signals:
-  cross_service_edges:
-    - {family: sync-rpc, protocol: feign, type: feign, direction: outbound, target: "<service-name>", schema_ref: null}
-    - {family: sync-rpc, protocol: http,  type: http,  direction: outbound, target: "<url-or-unknown>", schema_ref: null}
-    - {family: messaging, protocol: kafka, type: kafka, direction: outbound, target: "<topic-name>", schema_ref: null}
-    - {family: sync-rpc, protocol: grpc,  type: grpc,  direction: inbound,  target: "<service-name-or-unknown>", schema_ref: "path/to/file.proto"}
-  shared_libraries:
-    - {name: "<artifactId-or-package>", consumer_count: <N>}
-  auth_perimeter: "gateway|in-service-jwt|none|unknown"
-  ticket_prefix: "PROJ|null"
-```
-
-[Emit this block even if all signals are empty/unknown — the subsection must always be present]
-
-### Architectural Patterns
-
-```yaml
-architectural_patterns:
-  - {type: saga, style: orchestration, evidence: ["path/to/orchestrator.java:42"]}
-  - {type: circuit-breaker, library: resilience4j, evidence: ["path/with/@CircuitBreaker:88"]}
-  - {type: schema-registry, vendor: confluent, evidence: ["application.yml:schema.registry.url"]}
-```
-
-[Emit `architectural_patterns: []` when no patterns are detected. Omit any entry whose minimum-signal threshold is not met (empty evidence → no entry). BFF detection is workspace-only.]
-
-### Proposed Artifacts
-
-**CLAUDE.md** — [outline: commands table, architecture bullets, rules/skills index, critical rules count]
-[If existing: "Will add [X] to existing CLAUDE.md — preserving current content"]
-
-**Rules (N files):**
-- `<filename>.md` (paths: `<glob>`) — <what it covers, adaptive depth: full/medium/skeleton>
-
-**Skills (M to generate):**
-
-Before listing skills, **run skill dedup check** (see `../claudboard/references/quality-signals.md` → "Skill Deduplication"):
-- Compare each pair of proposed skills for file glob overlap >50% or shared trigger annotations
-- If overlap found, present it explicitly:
-  ```
-  **Skill overlap detected:**
-  - `skill-a` and `skill-b` share: [overlapping globs or triggers]
-    → Merge into one skill or keep separate with distinct scopes?
-  ```
-- Wait for user decision before listing final skill set
-- Document decision in the skill descriptions
-
-[If no overlap or after user resolves overlap:]
-- `<skill-name>/` — <what triggers it, what it creates, full scope: SKILL.md + references/ + scripts/>
-
-[If existing .claude/ found:]
-**Already covered (no action):**
-- `<existing rule>` — no gaps detected
-- `<existing skill>` — already defined
-
-### Context Overhead Estimate
-
-| Artifact | Est. lines | Est. tokens |
-|----------|-----------|-------------|
-| CLAUDE.md | ~N | ~X |
-| Rules (M files) | ~N total | ~X |
-| Skills (K dirs) | ~N total | ~X |
-| **Total persistent** | **~N** | **~X** |
-
-(CLAUDE.md always loaded; rules loaded when paths: globs match; skill refs loaded on-demand.
-See `../claudboard/references/quality-signals.md` → "Token Estimation Guide" for heuristics.)
-```
-
----
-
-### Monorepo report structure
-
-For monorepos, produce **two levels** of report content:
-
-**Global report** (covers the whole repo — CI/CD, shared libs, cross-service patterns):
-
-```
-## Project Analysis: <repo-name> (Monorepo)
-
-### What (purpose & value)
-<repo-level purpose>
-
-### Monorepo Topology
-| Service | Stack | Directory | Purpose |
-|---------|-------|-----------|---------|
-| <name> | <stack> | `<dir>/` | <1-phrase> |
-
-| Library | Directory | Consumed by |
-|---------|-----------|-------------|
-| <name> | `<dir>/` | [services] |
-
-### How (global — applies to all services)
-- CI/CD: <platform> — <stages/jobs>
-- Deploy: <model> — <IaC tool>
-- Branch strategy: <detected pattern>
-- Commit conventions: <detected format>
-- Cross-service communication: <event bus / REST contracts if detected>
-
-### Per-Service Summary
-
-| Service | Testing | Architecture | Conventions | Avg Score |
-|---------|---------|--------------|-------------|-----------|
-| <name> | [N]/10 | [N]/10 | [N]/10 | [X.X]/10 |
-
-**Quality variance:** [e.g., "Testing: 2/3 services scored 7+, 1/3 scored 4-6 — variance noted"]
-**Adaptive Depth:** [determined per service from average scores — see per-service reports]
-
-### Global Watch
-- [SEVERITY] <cross-service anti-pattern> — <evidence>
-
-### Proposed Global Artifacts
-**CLAUDE.md** — monorepo variant (services table, per-service commands, shared libs, global conventions)
-**Rules (global, no paths:):**
-- `ci-cd.md` — CI/CD and deployment conventions (applies everywhere)
-- `gitops.md` — IaC and GitOps constraints (applies everywhere) [if detected]
-```
-
-**Per-service report** (one per detected service):
-
-```
-## Service Analysis: <service-name>
-
-### Stack & Versions
-<stack, key dependencies, detected versions>
-
-### Quality Assessment
-[Same 1-10 scoring table as single-project, scoped to this service]
-
-**Average:** [X.X]/10
-
-**Adaptive Depth Decision:** [≥7.0] → Full | [4.0-6.9] → Medium | [<4.0] → Skeleton
-
-### Preserve / Watch
-[Same format as single-project, scoped to this service]
-
-### Workflow Signals
-
-```yaml
-workflow_signals:
-  cross_service_edges:
-    - {family: sync-rpc, protocol: feign, type: feign, direction: outbound, target: "<service-name>", schema_ref: null}
-    - {family: sync-rpc, protocol: http,  type: http,  direction: outbound, target: "<url-or-unknown>", schema_ref: null}
-    - {family: messaging, protocol: kafka, type: kafka, direction: outbound, target: "<topic-name>", schema_ref: null}
-    - {family: sync-rpc, protocol: grpc,  type: grpc,  direction: inbound,  target: "<service-name-or-unknown>", schema_ref: "path/to/file.proto"}
-  shared_libraries:
-    - {name: "<artifactId-or-package>", consumer_count: <N>}
-  auth_perimeter: "gateway|in-service-jwt|none|unknown"
-  ticket_prefix: "PROJ|null"
-```
-
-[Emit this block even if all signals are empty/unknown — the subsection must always be present]
-
-### Architectural Patterns
-
-```yaml
-architectural_patterns:
-  - {type: saga, style: orchestration, evidence: ["path/to/orchestrator.java:42"]}
-  - {type: circuit-breaker, library: resilience4j, evidence: ["path/with/@CircuitBreaker:88"]}
-  - {type: schema-registry, vendor: confluent, evidence: ["application.yml:schema.registry.url"]}
-```
-
-[Emit `architectural_patterns: []` when no patterns are detected. Omit any entry whose minimum-signal threshold is not met (empty evidence → no entry). BFF detection is workspace-only.]
-
-### Proposed Artifacts (scoped to this service)
-**Rules:**
-- `<service-name>-conventions.md` (paths: `<service-dir>/**`) — <conventions>
-**Skills:**
-- `<skill-name>/` — scoped to <service-dir>/
-```
+### Report format
+
+Load `../claudboard/references/report-template.md` for the exact section structure, field formats, YAML blocks, and template placeholders. Follow the template precisely.
+
+Key format rules (do NOT deviate):
+- Quality scores are whole numbers 1-10; use scoring criteria from `quality-signals.md`
+- The `### Workflow Signals` YAML block is always emitted, even when all values are empty/unknown
+- `architectural_patterns: []` when no pattern meets its minimum-signal threshold
+- Code duplication: "None detected" when `repo.source_file_count < 30` (no disclaimer)
+- After listing Watch findings, apply compound severity rules from `pattern-catalog.md`
+- Skill dedup check required before finalizing proposed skills list
 
 ---
 
@@ -1024,12 +705,20 @@ Then ask:
 | File | When to load |
 |------|-------------|
 | `../claudboard/references/stack-detectors.md` | Start of Phase 1 — shared detection heuristics |
-| `../claudboard/references/stack-detectors-{lang}.md` | Phase 1c Wide Scan — load language-specific file (java, typescript, python, go, rust, or dotnet) |
+| `../claudboard/references/stack-detectors-{lang}.md` | Phase 1c — load language-specific file (java, typescript, python, go, rust, or dotnet); trigger and anti-pattern catalogs live there |
 | `../claudboard/references/pattern-catalog.md` | Phase 2 — pattern/anti-pattern identification |
 | `../claudboard/references/quality-signals.md` | Phase 2 — quality scoring, rule depth, skill triggers |
-| `../claudboard/references/workflow-signals.md` | Phase 1 (after Wide Scan) — workflow signal schema, sub-catalog pointers, shared-lib and auth-perimeter detection |
-| `../claudboard/references/edges/sync-rpc.md` | Phase 1 — REST/gRPC/tRPC transport extraction (workspace mode, edge detection) |
-| `../claudboard/references/edges/messaging.md` | Phase 1 — Kafka/Solace/AMQP/JMS messaging extraction (workspace mode, edge detection) |
-| `../claudboard/references/edges/streaming.md` | Phase 1 — WebSocket/SSE/RSocket extraction (workspace mode, edge detection) |
-| `../claudboard/references/edges/graphql.md` | Phase 1 — GraphQL client/server extraction (workspace mode, edge detection) |
-| `../claudboard/references/patterns/architectural.md` | Phase 1 (after Wide Scan) — architectural pattern detection (all modes) |
+| `../claudboard/references/workflow-signals.md` | Phase 1 (after Wide Scan) — always load; workflow signal schema, sub-catalog pointers, shared-lib and auth-perimeter detection |
+| `../claudboard/references/edges/sync-rpc.md` | Phase 1 — always load in workspace mode; REST/gRPC/tRPC transport extraction |
+| `../claudboard/references/edges/messaging.md` | **Gated:** load only when `ref_load_signals.messaging == true` |
+| `../claudboard/references/edges/streaming.md` | **Gated:** load only when `ref_load_signals.streaming == true` |
+| `../claudboard/references/edges/graphql.md` | **Gated:** load only when `ref_load_signals.graphql == true` |
+| `../claudboard/references/patterns/architectural.md` | **Gated:** load only when `ref_load_signals.architectural == true` |
+
+## Discovery Script
+
+`scripts/discover.sh` — runs Phase 1b (global file scan), Phase 1c (wide scan), and Phase 1g (duplication detection) as a single bash invocation. Emits a versioned JSON document consumed by Phase 1c.
+
+**Schema version:** `"1"` (see `scripts/schema/discover-v1.md` for field semantics and the schema-bump procedure).
+
+**Language packs:** `scripts/lang/{java,typescript,python,go,rust,dotnet}.sh` — per-language grep sets dispatched from `discover.sh`. Add a new file here to add a language; update `SCHEMA_VERSION` in `discover.sh` if any new JSON field is added.
