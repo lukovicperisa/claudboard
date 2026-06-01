@@ -259,9 +259,9 @@ For WORKSPACE_MODE-specific variables, resolve as empty string when
 
 ---
 
-## Phase 5: Confirmation Gate
+## Phase 5: Pre-write summary
 
-Before writing any files, present a complete summary and wait for user approval.
+Before writing any files, present a complete summary.
 
 ```
 ## claudboard-workflow — Ready to Generate
@@ -296,16 +296,9 @@ Before writing any files, present a complete summary and wait for user approval.
   Per-repo feature-workflow skills found (will NOT be auto-deleted):
     • <workspace>/<repo>/.claude/skills/feature-workflow/
     [listed for manual cleanup — see completion report]
-
-Proceed? [y/n/edit]
 ```
 
-**On `n`:** Ask what should change and loop back to the relevant phase.
-
-**On `edit`:** Ask which value the user wants to change, update it, and re-show
-the confirmation gate.
-
-**On `y`:** Proceed to Phase 6.
+I'll proceed now — interrupt with Esc to abort or adjust.
 
 **Path violation guard:** Any resolved output path that falls outside
 `$SKILL_TARGET` must be refused immediately:

@@ -171,7 +171,7 @@ When `/refresh` is run from within a single service repo directory:
 
 ---
 
-## Phase 4: Gap Analysis Report
+## Phase 4: Pre-write summary
 
 Load `../claudboard/references/pattern-catalog.md` and `../claudboard/references/quality-signals.md` for assessment.
 
@@ -204,19 +204,15 @@ Present findings in delta format:
 **CLAUDE.md:** [specific additions/changes]
 **Rules:** [new/update list with adaptive depth]
 **Skills:** [new/update list]
-
----
-Apply these updates? [y/n/selective]
-If selective: which parts should I apply?
 ```
 
-**Pause here.** Wait for user confirmation.
+I'll proceed now — interrupt with Esc to abort or adjust.
 
 ---
 
-## Phase 5: Selective Generation
+## Phase 5: Generation
 
-Apply only the confirmed updates. Load references as needed:
+Apply all proposed updates. Load references as needed:
 - `../claudboard/references/claude-md-template.md` → for CLAUDE.md updates
 - `../claudboard/references/rule-templates.md` → for new/updated rules
 - `../claudboard/references/skill-generation.md` → for new/updated skills

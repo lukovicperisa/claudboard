@@ -38,7 +38,7 @@ Onboarding is a two-step process. Run each step separately for best results.
 /generate
 ```
 
-The `/analyse` command scans, detects patterns, and presents a WHAT/HOW/WHY analysis report with proposed artifacts. It saves the report to `.claude/reports/claudboard-analysis.md` without generating anything — effectively a dry-run. Phase 2 is a mandatory approval gate — artifacts are only written after you review and confirm the analysis.
+The `/analyse` command scans, detects patterns, and presents a WHAT/HOW/WHY analysis report with proposed artifacts. It saves the report to `.claude/reports/claudboard-analysis.md` without generating anything — effectively a dry-run. Artifacts are only written when you separately invoke `/generate`, giving you the opportunity to review the report first.
 
 The `/generate` command reads the saved report and creates the `.claude/` artifacts. Best run in a fresh Claude Code session so the generation context isn't polluted by discovery data.
 
@@ -128,7 +128,7 @@ Every claudboard run upholds these contracts:
 - **Signal threshold** — no skill is generated for patterns appearing fewer than 3 times in the codebase
 - **Output caps** — CLAUDE.md: 60-120 lines; rules: 30-120 lines (adaptive); skills: 80-250 lines
 - **Token budget visibility** — the Phase 2 report includes estimated persistent context overhead so you can see the cost before committing
-- **Approval gate** — nothing is written until you confirm the Phase 2 proposal; the gate is non-skippable
+- **Pre-write summary** — a summary of what will be written is shown before file writes begin; interrupt with Esc to abort or adjust
 - **Merge-only** — existing `.claude/` content is never overwritten, only gaps are filled
 
 ## Repository structure

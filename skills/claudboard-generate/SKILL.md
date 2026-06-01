@@ -63,7 +63,7 @@ in the target project.
 
 ---
 
-## Phase 2: Confirmation
+## Phase 2: Pre-write summary
 
 Show the Proposed Artifacts from the report. If the report contains skill dedup decisions (merged or separated skills), preserve those decisions — don't re-evaluate.
 
@@ -81,13 +81,9 @@ Show the Proposed Artifacts from the report. If the report contains skill dedup 
 [If existing .claude/ found:]
 **Already covered (skipping):**
 - `<existing artifact>` — no gaps
-
----
-Generate these artifacts? [y/n]
-If n: which parts should I skip or change?
 ```
 
-**Pause here.** Wait for user confirmation before proceeding.
+I'll proceed now — interrupt with Esc to abort or adjust.
 
 ---
 
