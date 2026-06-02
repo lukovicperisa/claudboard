@@ -3,8 +3,10 @@ name: claudboard-analyse
 description: >
   Deep-analyzes a project repository: detects tech stack, architecture patterns,
   coding conventions, testing strategies, CI/CD pipelines, quality signals, and
-  anti-patterns. Produces a structured analysis report saved to
-  .claude/reports/claudboard-analysis.md.
+  anti-patterns. Default mode produces a convention catalog (.claudboard/catalog.json)
+  and a thin human-readable summary (.claude/reports/claudboard-analysis.md).
+  Use --audit for per-service deep analysis (per-service reports, full Watch findings,
+  cross-service Kafka graphs). Written to .claudboard/audits/ when --audit is passed.
   Use when: /analyse, "analyze this codebase", "scan this repo", "project
   health check", "audit this project", "what patterns does this repo use",
   "understand this project", "code quality review", "architecture audit".
@@ -12,15 +14,40 @@ description: >
 
 # Analyse — Codebase Discovery & Analysis
 
-Scans a repository, detects patterns, and saves a structured analysis report. **Read-only** — never modifies source code or generates artifacts.
+Scans a repository, detects patterns, and writes a convention catalog. **Read-only** — never modifies source code or generates artifacts.
 
 ## Invocation
 
 ```
-/analyse [path]
+/analyse [path]           — default mode: catalog + thin summary
+/analyse [path] --audit   — audit mode: catalog + thin summary + per-service deep reports
 ```
 
 Path defaults to the current working directory. Works on any language/framework.
+
+### Dual-mode behaviour
+
+| | Default | `--audit` |
+|---|---|---|
+| `.claudboard/catalog.json` | Always | Always (`from_audit: true`) |
+| `.claude/reports/claudboard-analysis.md` | Always (thin) | Always |
+| `.claudboard/audits/<svc>.md` | Not produced | One per service |
+| Per-service deep pass (Phases 1c-1h) | Reference service per stack only | All services via Sonnet sub-agents |
+| Cost (craftsphere.cloud 19-service) | ≤$150 | ≤$250 |
+| Cost (single-project ~500 files) | ≤$15 | ≤$15 (no-op in v1) |
+
+Default mode runs one reference-service deep pass per detected stack — enough to populate all catalog fields. `--audit` fans out to every service. Cost context: all-Opus fan-out on craftsphere.cloud measured $417; asymmetric tier targets ≤$150/≤$250 (see `thin-analyse-catalog-primary` design.md).
+
+### Model tiers
+
+| Stage | Tier |
+|---|---|
+| `discover.sh` / bash steps | n/a |
+| Sub-agent extraction (`--audit` only) | **Sonnet** |
+| Orchestrator catalog synthesis + outlier sweep | **Opus** |
+| `/generate` (downstream) | **Sonnet** |
+
+Haiku is intentionally not used in v1.
 
 ---
 
@@ -252,9 +279,11 @@ Skip: `node_modules/`, `.git/`, `dist/`, `build/`, `target/`, `__pycache__/`, `.
 
 ---
 
-> **Monorepo mode — per-service loop:** For each detected **service** (not library), run Phases 1c through 1h independently, scoping all file paths and grep commands to the service's directory. Repeat the full Phase 1c-1h cycle for each service before moving to Phase 2.
-
-> **Workspace mode — per-repo loop:** For each detected **service repo** (not library), run identity extraction + surface extraction (above), then Phases 1c through 1h independently, scoping all commands to that repo's directory. After all repos analyzed, proceed to new Phase 1c (graph construction).
+> **Monorepo mode — default mode:** Run Phases 1c through 1h on ONE reference service per detected stack (pick the most representative: most files, most complete Dockerfile, or explicitly named reference service). This populates `patterns`, `conventions`, and `adaptive_depth` in the catalog. Do NOT run the full per-service loop in default mode.
+>
+> **Monorepo mode — `--audit` mode:** Fan out Phases 1c-1h to EVERY detected service (not library) via parallel Sonnet sub-agents. Each spawned `Agent` call SHALL specify `model: "claude-sonnet-4-6"` explicitly.
+>
+> **Workspace mode:** Per-repo loop unchanged — identity extraction + Phases 1c-1h per repo, then Phase 1c graph construction. Catalog-first adaptation deferred to follow-up change.
 
 ---
 
@@ -628,58 +657,42 @@ If patterns are ambiguous or inconsistent, ask the user now — e.g.:
 
 **Execute these steps in order. Do not skip or reorder. Do not ask the user anything until step 3 is complete.**
 
-All saved files must include YAML frontmatter:
+The human-readable summary and audit files use YAML frontmatter (`generated_at`, `repo`, `version: "2.1.0"`). The catalog is plain JSON — no frontmatter; fields per `catalog-schema.json`.
 
-```yaml
----
-generated_at: <ISO 8601 timestamp>
-repo: <absolute path to project root>
-version: "2.1.0"
----
+### Step 1: Create output directories
+
+```bash
+mkdir -p <project-root>/.claudboard          # catalog + audits
+mkdir -p <project-root>/.claude/reports      # human-readable summary
+mkdir -p <project-root>/.claudboard/audits   # only if --audit
+# Workspace: mkdir -p <workspace>/.claudboard && mkdir -p <workspace>/.claude/reports
 ```
 
-### Step 1: Create the reports directory
+### Step 2: Write output files using the Write tool
 
-Create the reports directory before writing any file. This is idempotent — safe to run even if the directory exists.
+**Use the Write tool to create each file. Displaying content to the user does NOT substitute for writing it to disk.**
 
-- **Single-project / monorepo:** `mkdir -p <project-root>/.claude/reports`
-- **Workspace:** `mkdir -p <workspace>/.claude/reports`
+#### Always written (both modes)
 
-### Step 2: Write report file(s) using the Write tool
+**`.claudboard/catalog.json`** — primary artifact. Write first. Conforms to `catalog-schema.json`. Set `schema_version: "1"`, `from_audit: <bool>`. Include `audit_summary` only when `from_audit: true`.
 
-**Use the Write tool to create each file. Displaying the analysis content to the user does NOT substitute for writing the file to disk.**
+**`.claude/reports/claudboard-analysis.md`** — thin summary (80-150 lines single-project, 150-250 monorepo). Include topology overview, detected conventions, proposed artifacts list. Default mode: note "Run `/analyse --audit` for per-service detail." Audit mode: cross-reference `.claudboard/audits/<svc>.md`. Do NOT include per-service Watch findings or quality scores in default mode.
 
-**Single-project:** Write the full report to `.claude/reports/claudboard-analysis.md`.
+#### Written only in `--audit` mode
 
-**Monorepo:** Write two levels:
-- `.claude/reports/claudboard-analysis.md` — global report (topology, CI/CD, cross-service patterns, per-service summary table, proposed global artifacts). Frontmatter additionally includes `monorepo: true` and `services: [<dir-name>, ...]`.
-- `.claude/reports/claudboard-analysis-<dir-name>.md` — one per detected service (e.g., `claudboard-analysis-order-service.md`). Use the service's directory name as-is — no transformation.
+**`.claudboard/audits/<service-dir-name>.md`** — full per-service report (Watch findings, 8-dimension quality scores, call-path traces, cross-service Kafka graph). YAML frontmatter: `monorepo_service: true`, `generated_at`, `repo`.
 
-Write the global report first, then each per-service report. All writes complete before Step 3.
-
-**Workspace:**
-- Verify all per-repo sub-agent reports exist in `<workspace>/.claude/reports/` (written during the Phase 1a parallelisation protocol). If any are missing, recover them serially before proceeding.
-- Write `<workspace>/.claude/reports/claudboard-analysis-workspace.md` — global workspace summary (topology table, cross-service dependency graph, per-repo summary table with quality scores, global Watch findings, proposed global artifacts). Frontmatter includes `workspace: true`, `repos: [<service-dir-name>, ...]`, and `libraries: [<library-dir-name>, ...]`.
-- Per-repo reports were written by sub-agents — do NOT re-write them here. Only the workspace summary is written in this step.
-
-Each per-repo sub-agent report frontmatter must include `workspace_member: true` and `workspace_root: <absolute workspace path>`.
+Write catalog → summary → audit files. **Workspace mode:** unchanged (per-repo reports in `<workspace>/.claude/reports/`; no catalog in v1).
 
 **If any Write tool call fails** (permission error, disk full, path conflict): report the error to the user and stop. Do not proceed to Step 3. Do not claim the analysis is saved.
 
-### Step 3: Confirm save and ask about generation
+### Step 3: Confirm save and recommend next steps
 
-After all writes succeed, confirm to the user:
+Confirm written paths (`.claudboard/catalog.json`, `.claude/reports/claudboard-analysis.md`, `.claudboard/audits/<svc>.md` if `--audit`). Then:
 
-> Analysis saved to:
-> - `.claude/reports/claudboard-analysis.md` (single-project / monorepo)
-> - or list all written paths (workspace)
+> Run `/generate` in a fresh session to produce CLAUDE.md, rules, and skills from the catalog. (Fresh session recommended.) For per-service Watch findings, run `/analyse --audit`. For tech debt, run `/techdebt`.
 
-Then ask:
-
-> Would you like to generate artifacts now, or run `/generate` in a fresh session? (Fresh session recommended — analysis fills context with discovery data not needed during generation.)
-
-- If user chooses to generate now: proceed with `../claudboard-generate/SKILL.md` steps starting from Phase 2 (skip Phase 1 report loading — you already have the data).
-- If user defers: end with "Run `/generate` in a fresh session when ready. For tech debt analysis, run `/techdebt`."
+If user wants to generate now: proceed with `../claudboard-generate/SKILL.md` Phase 2 (skip Phase 1 — catalog already in context).
 
 ---
 
@@ -694,7 +707,11 @@ Then ask:
 
 ## Constraints
 
-- **Read-only for source code.** Files written depend on mode: single-project writes `.claude/reports/claudboard-analysis.md`; monorepo additionally writes `.claude/reports/claudboard-analysis-<service>.md` per service; workspace writes `<workspace>/.claude/reports/claudboard-analysis-workspace.md` plus `<workspace>/.claude/reports/claudboard-analysis-<repo>.md` per service repo (by sub-agents) and `<repo>/.claude/memories/ecosystem.md` per service repo (by orchestrator). In workspace mode, per-repo `.claude/reports/` directories are NOT written — the workspace report directory is the single source of truth.
+- **Read-only for source code.** Files written:
+  - **Always (any mode):** `.claudboard/catalog.json` (primary artifact), `.claude/reports/claudboard-analysis.md` (thin summary)
+  - **`--audit` only, monorepo/single-project:** `.claudboard/audits/<service-name>.md` per service
+  - **Workspace mode (unchanged):** `<workspace>/.claude/reports/claudboard-analysis-workspace.md` (orchestrator), `<workspace>/.claude/reports/claudboard-analysis-<repo>.md` per service repo (sub-agents), `<repo>/.claude/memories/ecosystem.md` per service repo (orchestrator). No catalog produced in workspace mode in v1.
+- **`.claudboard/catalog.json` is the primary artifact contract.** Per-service audit reports at `.claudboard/audits/` are opt-in via `--audit`. `.claude/reports/claudboard-analysis.md` is the human-readable summary; it is thin and does not duplicate catalog content.
 - **Never modify source code, tests, or existing files.**
 - **Max ~50 source files read** for large repos — note sampling in report.
 - **Secrets found during scan:** Report file:line only, never print the value.
@@ -709,6 +726,8 @@ Then ask:
 | `../claudboard/references/pattern-catalog.md` | Phase 2 — pattern/anti-pattern identification |
 | `../claudboard/references/quality-signals.md` | Phase 2 — quality scoring, rule depth, skill triggers |
 | `../claudboard/references/workflow-signals.md` | Phase 1 (after Wide Scan) — always load; workflow signal schema, sub-catalog pointers, shared-lib and auth-perimeter detection |
+| `../claudboard/references/catalog-schema.json` | Phase 3 — catalog output contract; load to validate field set before writing |
+| `../claudboard/references/catalog-format.md` | Phase 3 — human explainer for catalog fields, regeneration rules, .gitignore guidance |
 | `../claudboard/references/edges/sync-rpc.md` | Phase 1 — always load in workspace mode; REST/gRPC/tRPC transport extraction |
 | `../claudboard/references/edges/messaging.md` | **Gated:** load only when `ref_load_signals.messaging == true` |
 | `../claudboard/references/edges/streaming.md` | **Gated:** load only when `ref_load_signals.streaming == true` |

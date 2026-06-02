@@ -1,0 +1,197 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/claudboard/catalog-schema/v1",
+  "title": "Claudboard Convention Catalog",
+  "description": "Primary artifact on the analyse→generate path. Produced by /analyse, consumed by /generate and future /refresh. Location: <project>/.claudboard/catalog.json",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "from_audit",
+    "repo",
+    "mode",
+    "stacks",
+    "conventions",
+    "patterns",
+    "proposed_artifacts",
+    "adaptive_depth"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1",
+      "description": "Catalog schema version. Consumers assert this matches their expected value; mismatch → clear error naming both versions."
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 timestamp of when this catalog was produced."
+    },
+    "from_audit": {
+      "type": "boolean",
+      "description": "true if produced by /analyse --audit and sibling to .claudboard/audits/*.md; false if produced by default /analyse."
+    },
+    "repo": {
+      "type": "string",
+      "description": "Absolute path to the analysed project root."
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["single-project", "monorepo", "workspace"],
+      "description": "Analysis mode detected by /analyse."
+    },
+    "stacks": {
+      "type": "array",
+      "description": "One entry per detected stack. A stack groups services that share a runtime/framework (e.g. java-spring, react-ts).",
+      "items": {
+        "type": "object",
+        "required": ["id", "service_count", "exemplar_paths"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stack identifier, e.g. 'java-spring', 'react-ts', 'node-bff', 'go', 'kotlin-spring', 'quarkus'."
+          },
+          "service_count": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Number of services in this stack."
+          },
+          "reference_service": {
+            "type": ["string", "null"],
+            "description": "Directory name of the reference service used for deep pass in default mode. null if not yet determined."
+          },
+          "applicable_paths": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Glob patterns covering all service directories in this stack. Used by /generate for rule paths: scoping."
+          },
+          "exemplar_paths": {
+            "type": "object",
+            "description": "Map of pattern-name → canonical exemplar file path within the reference service.",
+            "additionalProperties": { "type": "string" }
+          }
+        }
+      }
+    },
+    "conventions": {
+      "type": "object",
+      "description": "Project-wide canonical conventions. Values are short descriptive strings; null when undetected.",
+      "properties": {
+        "di_style": {
+          "type": ["string", "null"],
+          "description": "Dependency injection style, e.g. 'constructor', 'field', 'property'."
+        },
+        "logging": {
+          "type": ["string", "null"],
+          "description": "Logging framework and pattern, e.g. 'SLF4J/Logback structured JSON', 'console.log plain'."
+        },
+        "error_handling": {
+          "type": ["string", "null"],
+          "description": "Error handling approach, e.g. 'wrap-and-rethrow', 'Result type', 'global @ControllerAdvice'."
+        },
+        "test_framework": {
+          "type": ["string", "null"],
+          "description": "Primary test framework, e.g. 'Spock', 'JUnit 5', 'Jest', 'Vitest'."
+        },
+        "naming": {
+          "type": ["string", "null"],
+          "description": "Naming conventions summary, e.g. 'PascalCase classes, camelCase methods, kebab-case files'."
+        }
+      },
+      "additionalProperties": {
+        "type": ["string", "null"]
+      }
+    },
+    "patterns": {
+      "type": "object",
+      "description": "Keyed by pattern id (e.g. 'kafka_consumer', 'rest_controller', 'spock_spec', 'react_component'). Each value describes the canonical exemplar and usage.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["exemplar_path", "frequency"],
+        "additionalProperties": false,
+        "properties": {
+          "exemplar_path": {
+            "type": "string",
+            "description": "Relative path from repo root to the canonical exemplar file for this pattern. Used by /generate to derive skill reference content."
+          },
+          "frequency": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Count of files matching this pattern across the codebase."
+          },
+          "variations": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Known variant names or deviations from the canonical pattern."
+          },
+          "applicable_paths": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Glob patterns where this pattern appears. Subset of a stack's applicable_paths when monorepo-scoped."
+          }
+        }
+      }
+    },
+    "proposed_artifacts": {
+      "type": "array",
+      "description": "Deduplicated project-wide list of rules and skills to generate. /generate iterates this list exactly.",
+      "items": {
+        "type": "object",
+        "required": ["type", "name", "depth_signal"],
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["rule", "skill"],
+            "description": "Artifact type."
+          },
+          "name": {
+            "type": "string",
+            "description": "Artifact filename (rule) or directory name (skill), e.g. 'java-conventions' or 'kafka-consumer'."
+          },
+          "paths": {
+            "type": ["array", "null"],
+            "items": { "type": "string" },
+            "description": "paths: globs for rules. null for global rules. null or omitted for skills."
+          },
+          "exemplar": {
+            "type": ["string", "null"],
+            "description": "Relative path to exemplar file. Cross-references patterns[id].exemplar_path."
+          },
+          "depth_signal": {
+            "type": "string",
+            "enum": ["full", "medium", "skeleton"],
+            "description": "Adaptive depth signal: full (quality avg ≥7.0), medium (4.0-6.9), skeleton (<4.0)."
+          }
+        }
+      }
+    },
+    "adaptive_depth": {
+      "type": "object",
+      "description": "Per-stack rule and skill depth signal, keyed by stack id.",
+      "additionalProperties": {
+        "type": "string",
+        "enum": ["full", "medium", "skeleton"]
+      }
+    },
+    "audit_summary": {
+      "type": "object",
+      "description": "Present only when from_audit: true. References audit files and surfaces top Watch findings.",
+      "properties": {
+        "audit_files": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Relative paths to .claudboard/audits/<svc>.md files produced by this run."
+        },
+        "top_watch_findings": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Top cross-service Watch findings surfaced from audit reports."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

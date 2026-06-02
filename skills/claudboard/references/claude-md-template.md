@@ -79,6 +79,9 @@ Example: "azure-devops-mcp is a Node.js MCP server that exposes Azure DevOps API
 [Only include if memories/ were generated or if there's important shared context to reference]
 Shared context in `.claude/memories/` — [brief description of what's there].
 
+[Include only if the project has .claudboard/:]
+Build state from `/analyse` lives in `.claudboard/` (not loaded by Claude Code at runtime). Re-run `/analyse` to refresh; run `/analyse --audit` for per-service detail.
+
 ## Critical Rules (always apply)
 
 [5-7 rules maximum. These are the most important conventions, the ones that would cause real problems if violated. Extract from detected patterns — do NOT list generic best practices.]

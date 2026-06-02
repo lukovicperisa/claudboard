@@ -38,9 +38,30 @@ Onboarding is a two-step process. Run each step separately for best results.
 /generate
 ```
 
-The `/analyse` command scans, detects patterns, and presents a WHAT/HOW/WHY analysis report with proposed artifacts. It saves the report to `.claude/reports/claudboard-analysis.md` without generating anything — effectively a dry-run. Artifacts are only written when you separately invoke `/generate`, giving you the opportunity to review the report first.
+The `/analyse` command scans, detects patterns, and writes:
+- **`.claudboard/catalog.json`** — the primary artifact consumed by `/generate` (structured JSON, versioned schema)
+- **`.claude/reports/claudboard-analysis.md`** — a thin human-readable summary for review before generating
 
-The `/generate` command reads the saved report and creates the `.claude/` artifacts. Best run in a fresh Claude Code session so the generation context isn't polluted by discovery data.
+By default, `/analyse` runs a reference-service deep pass per detected stack — cheap enough for large monorepos. Pass `--audit` for full per-service analysis (Watch findings, quality scores, cross-service graphs written to `.claudboard/audits/<svc>.md`).
+
+The `/generate` command reads `.claudboard/catalog.json` and creates `.claude/` artifacts. Best run in a fresh Claude Code session. If you have artifacts from a prior claudboard version (`.claude/reports/cloudboard-analysis.md` only), `/generate` auto-migrates to the catalog format on first run.
+
+### Filesystem layout
+
+```
+<project>/
+  .claudboard/         ← build state; not loaded by Claude Code at runtime
+    catalog.json       ← primary artifact for /generate and /refresh
+    audits/            ← per-service reports (--audit only)
+      <svc>.md
+  .claude/             ← runtime context (auto-loaded by Claude Code)
+    reports/
+      claudboard-analysis.md   ← thin summary, human review
+    rules/, skills/, memories/ ← generated artifacts
+  CLAUDE.md            ← generated project overview
+```
+
+`.claudboard/` is build state — consider adding it to `.gitignore` (or commit it to share the catalog across team members; see `catalog-format.md` for trade-offs).
 
 Additional commands:
 
@@ -49,6 +70,19 @@ Additional commands:
 - **`/claudboard-workflow`** — Generates a complete `.claude/skills/feature-workflow/` skill into any project (opt-in, run after `/generate`)
 - **`/claudboard-workspace-init`** — Bootstrap a workspace meta-repo for multi-repo workspaces (run once by the first developer)
 - **`/claudboard-workspace-link`** — Teammate bootstrap: clones the workspace meta-repo and wires up the symlink
+
+## Migration from older claudboard
+
+If you've previously run `/analyse` without the catalog architecture (older versions produced only `.claude/reports/claudboard-analysis.md`), no action is required. On your next `/generate` run, claudboard automatically:
+
+1. Detects the missing `.claudboard/catalog.json`
+2. Parses your existing legacy report(s) and synthesises a catalog
+3. Writes `.claudboard/catalog.json` (log line confirms the migration)
+4. Proceeds with normal generation
+
+Your legacy report files are left in place — only the new catalog is written. Subsequent `/generate` runs use the catalog directly and skip migration.
+
+If migration fails (incompatible older format), the error message names the offending file and instructs you to run `/analyse` for a fresh catalog.
 
 ## Lifecycle
 
@@ -147,6 +181,13 @@ Every claudboard run upholds these contracts:
 ## Per-task cost reporting (optional)
 
 Every `/analyse`, `/generate`, `/refresh`, and `/techdebt` run touches real API tokens. A `Stop` hook lets you see the dollar cost of each individual claudboard task at the moment it finishes — at zero extra API cost, since the hook reads the session JSONL that Claude Code already writes to disk.
+
+**Expected cost ranges** (asymmetric tier: Opus orchestrator, Sonnet sub-agents):
+- `/analyse` default — single-project: ≤$15; 19-service monorepo: ≤$150
+- `/analyse --audit` — 19-service monorepo: ≤$250 (full per-service fan-out)
+- `/generate` (from catalog) — ≤$25 on a 19-service monorepo
+
+The `thin-analyse-catalog-primary` change (2026-06-01) documents the measured baseline ($417 all-Opus) and the architectural rationale for the catalog-as-primary approach.
 
 To enable, add the following block to your project's `.claude/settings.local.json` (or the global `~/.claude/settings.json`). Replace `<abs-path>` with the absolute path to this plugin's scripts directory.
 
