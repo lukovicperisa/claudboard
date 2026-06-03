@@ -30,13 +30,13 @@ check() {
 
 out=$("$SCRIPT" "$F/single-task-opus.jsonl" --task analyse --since 2026-05-31T13:06:00.000Z)
 check "single-task-opus one-line" \
-  'Cost for /analyse: $0.18 (Opus 4.7, 2 calls, 2K out)' \
+  'Cost for /analyse: $0.06 (Opus 4.7 (Vertex), 2 calls, 2K out)' \
   "$out"
 
 # Without --task flag
 out=$("$SCRIPT" "$F/single-task-opus.jsonl")
 check "single-task-opus no-task prefix" \
-  'Cost: $0.18 (Opus 4.7, 2 calls, 2K out)' \
+  'Cost: $0.06 (Opus 4.7 (Vertex), 2 calls, 2K out)' \
   "$out"
 
 # JSON output is valid JSON and has correct keys
@@ -55,7 +55,7 @@ check "single-task-opus json api_calls" \
 
 out=$("$SCRIPT" "$F/mixed-models.jsonl" --task generate)
 check "mixed-models one-line" \
-  'Cost for /generate: $0.12 (mixed, 2 calls, 2K out)' \
+  'Cost for /generate: $0.06 (mixed, 2 calls, 2K out)' \
   "$out"
 
 json=$("$SCRIPT" "$F/mixed-models.jsonl" --format json)
@@ -82,7 +82,7 @@ echo "$json" | jq . > /dev/null 2>&1 && echo "PASS: unknown-model json is valid 
 # ── JSONL path from environment variable ──────────────────────────────────────
 out=$(CLAUDE_SESSION_JSONL="$F/single-task-opus.jsonl" "$SCRIPT" --task analyse --since 2026-05-31T13:06:00.000Z)
 check "env-var JSONL path" \
-  'Cost for /analyse: $0.18 (Opus 4.7, 2 calls, 2K out)' \
+  'Cost for /analyse: $0.06 (Opus 4.7 (Vertex), 2 calls, 2K out)' \
   "$out"
 
 # ── missing JSONL path exits non-zero ─────────────────────────────────────────

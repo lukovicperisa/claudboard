@@ -52,18 +52,13 @@ Read all existing Claude artifacts and build a coverage map:
 - For each: read the `name:` and `description:` frontmatter
 - Note which have `references/` and `scripts/` subdirs
 
-### 2d. Prior analysis report
+### 2d. Prior catalog and analysis report
 
-**Workspace mode** (detected in Phase 1 or from CWD structure): Read the report
-from the workspace reports directory — `<workspace>/.claude/reports/claudboard-analysis-<repo-name>.md`
-for the current repo, or `claudboard-analysis-workspace.md` for workspace-level
-refresh. Do NOT look in per-repo `.claude/reports/` — the workspace report
-directory is the single source of truth.
+Check for `.claudboard/catalog.json` first (primary input — all modes). If present, read `umbrella_root` and `generated_at`. All write paths use `<umbrella_root>/.claude/`.
 
-**Single-project / monorepo:**
-- Check for `.claude/reports/claudboard-analysis.md`
-- If found: read `generated_at` timestamp for delta comparison and check `monorepo: true` in frontmatter
-- **Monorepo:** also list all `claudboard-analysis-<name>.md` files — these represent the previously detected services. Record service names (derived from filenames) as the prior service list.
+Fall back to `.claude/reports/claudboard-analysis.md` (legacy) if catalog absent. In workspace mode without a catalog, look for `cloudboard-analysis.md` at the workspace root's `.claude/reports/` rather than per-repo paths.
+
+**Legacy per-repo reports** (`claudboard-analysis-<repo>.md`) are NOT read by `/refresh` after this change — they are superseded by the unified catalog. They remain on disk as read-only history.
 
 ---
 
@@ -108,66 +103,32 @@ Compare Wide Scan results against existing artifacts:
   - Report exists but build root directory is gone → flag: `"Service removed: {dir-name}. Stale report and rules can be deleted."`
   - Directory renamed (heuristic: same stack detected in different directory, old directory gone) → flag: `"Service appears renamed: {old-name} → {new-name}. Re-run /analyse to update."`
 
-**Workspace mode refresh behavior** (tasks 7.1-7.4):
+**Workspace mode refresh behavior:**
 
-Workspace mode is detected when:
-- CWD contains subdirectories with independent `.git/` repos AND each has a build file
-- OR: prior analysis report exists with `workspace: true` in frontmatter (to be added in future — for now, detect by CWD structure)
+Workspace mode is detected when CWD contains subdirectories with independent `.git/` repos AND each has a build file, or from `catalog.mode == "workspace"`.
 
-**Workspace-level refresh** (task 7.1, CWD is workspace root):
+**Workspace-level refresh (CWD is workspace root):**
 
-When `/refresh` is run from the workspace root (directory containing multiple repos with `.git/`):
-
-1. Re-run per-repo surface extraction:
+1. Re-run per-service surface extraction:
    - Follow `../claudboard/references/stack-detectors.md` → "Cross-Service Surface Detection"
    - For each service repo: extract service identity, outbound REST/Kafka/Solace, inbound REST/Kafka/Solace
-   - Record surface data for graph construction
 
-2. Re-run Phase 1c from analyse skill (graph construction):
-   - Match outbound references against inbound surfaces across all repos
-   - Classify coupling strength (TIGHT/MODERATE/LOOSE)
-   - Detect synchronous chains and circular dependencies
-   - Present updated graph to user for confirmation
+2. Re-run graph construction (same as `/analyse` Phase 1i):
+   - Match outbound against inbound, classify coupling, detect chains/circles
+   - Present updated graph for user confirmation
 
-3. **Completely overwrite** all `<repo>/.claude/memories/ecosystem.md` files with current graph data:
-   - Each service's Role, Depends On, Used By, Shared Contracts, Coupling Warnings sections
-   - Skip library repos and workspace root (no ecosystem.md written there)
+3. **Overwrite umbrella ecosystem.md** at `<umbrella_root>/.claude/memories/ecosystem.md` with current graph data. This is the ONLY ecosystem.md that exists — there are no per-service copies to update.
 
-4. **New-service detection** (task 7.2):
-   - Compare current repo list against prior analysis (if prior report exists)
-   - If a new repo directory appears that was not in the prior analysis:
-     - Flag: "New repo detected: {dir-name}. Run `/analyse` from workspace root to include it in the ecosystem graph."
-   - Do not attempt to analyse the new repo during refresh — full `/analyse` required for cross-service context
+4. **New-service detection:**
+   - If a new service directory appears not in the prior catalog: flag "New service detected: {dir-name}. Re-run `/analyse` to include it in the catalog and ecosystem."
+   - Do not analyse the new service inline — full `/analyse` required.
 
-**Service-level refresh** (task 7.3, CWD is a single service repo):
+5. **Per-service CLAUDE.md update** (when catalog indicates a service's role or stack changed):
+   - Update the relevant `<service-dir>/CLAUDE.md` — only changed sections.
 
-When `/refresh` is run from within a single service repo directory:
+**Service-level refresh (CWD is a single service repo):**
 
-1. Check for sibling repos at parent level (same check as right-level detection in analyse):
-   - Scan `../` for directories with build files + `.git/`
-   - If N≥2 siblings found → workspace context exists
-
-2. If workspace context exists:
-   - Re-run surface extraction for this service only (follow `../claudboard/references/stack-detectors.md` → "Cross-Service Surface Detection")
-   - Update this service's `ecosystem.md` from its own outbound perspective:
-     - **Depends On** section: re-derive from current outbound calls
-     - **Shared Contracts** section: update published topics from current code
-     - **Used By and Coupling Warnings**: cannot be updated (requires full workspace graph) — leave existing content
-   - Display stale warning:
-     ```
-     Updated ecosystem context for this service.
-     
-     ⚠ Warning: Ecosystem files in sibling services may be stale:
-     • user-service/.claude/memories/ecosystem.md
-     • notification-service/.claude/memories/ecosystem.md
-     
-     Run `/refresh` from workspace root to sync all services.
-     ```
-
-3. **No-workspace-context case** (task 7.4):
-   - If no sibling repos detectable at parent level (workspace context does not exist)
-   - Proceed with normal service-level refresh (delta discovery against existing rules/skills)
-   - Do not attempt ecosystem updates or warnings
+If `/refresh` is run from within a service subdirectory, check for workspace context (sibling repos with `.git/`). If workspace context exists, warn: "Run `/refresh` from the workspace root to update the ecosystem graph. Service-level refresh cannot update `<umbrella_root>/.claude/memories/ecosystem.md` without the full workspace context." Then proceed with delta discovery for that service's rules and CLAUDE.md only.
 
 ---
 
@@ -254,12 +215,11 @@ For tech debt analysis and refactoring tickets: run `/techdebt`
 
 ## Phase 6: Save Updated Report
 
-**Single-project / monorepo:** Overwrite `.claude/reports/claudboard-analysis.md` with a fresh full analysis (combining prior report data with new discoveries). Update `generated_at` timestamp.
+Overwrite `<umbrella_root>/.claude/reports/claudboard-analysis.md` (all modes — single-project, monorepo, workspace) with a fresh summary combining prior data with new discoveries. Update `generated_at` timestamp.
 
-**Workspace mode:** Overwrite the report in the workspace reports directory —
-`<workspace>/.claude/reports/claudboard-analysis-<repo-name>.md` for service-level
-refresh, or `claudboard-analysis-workspace.md` for workspace-level refresh. Do NOT
-write to per-repo `.claude/reports/`.
+Do NOT write per-repo or per-service report files. The unified umbrella report is the single source of truth.
+
+**Legacy per-repo reports** (`<workspace>/.claude/reports/cloudboard-analysis-<repo>.md`) left by prior versions are NOT updated and NOT deleted. They remain on disk as read-only history. A future `--prune-stale` flag will handle cleanup.
 
 ---
 
@@ -274,8 +234,10 @@ write to per-repo `.claude/reports/`.
 
 ## Constraints
 
-- **Write only to `.claude/` and project-root CLAUDE.md.**
-- **Never modify source code, tests, or any existing file outside `.claude/`.**
+- **Write only to `<umbrella_root>/.claude/`, `<umbrella_root>/CLAUDE.md`, and `<umbrella_root>/<service>/CLAUDE.md`.**
+- **No per-service `.claude/` writes** — NEVER write to `<service>/.claude/skills/`, `<service>/.claude/rules/`, or `<service>/.claude/memories/` under any mode. These per-service directories are not updated by `/refresh`; they simply stop receiving updates.
+- **Legacy per-service `.claude/` directories are left untouched** — they were produced by prior `/generate` versions and do no runtime harm (they were never loaded). Users may delete them at leisure. Future `--prune-stale` flag will automate cleanup.
+- **Never modify source code, tests, or any existing file outside the above paths.**
 - **Merge, don't replace** — always preserve existing artifact content.
 - **Delta-first** — never regenerate from scratch; update only what changed.
 - **Secrets:** Never include secret values in generated artifacts.

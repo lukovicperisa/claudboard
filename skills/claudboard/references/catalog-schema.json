@@ -34,7 +34,11 @@
     },
     "repo": {
       "type": "string",
-      "description": "Absolute path to the analysed project root."
+      "description": "Absolute path to the analysed project root (reference repo in workspace mode, repo root in monorepo/single-project)."
+    },
+    "umbrella_root": {
+      "type": "string",
+      "description": "Absolute path to the umbrella root — the directory that owns .claude/ and .claudboard/. Equal to repo for monorepo/single-project. Equal to the workspace directory for workspace mode (where .claude/ is reachable via the meta-repo symlink). Consumers write all artifacts relative to this path."
     },
     "mode": {
       "type": "string",
@@ -56,7 +60,12 @@
           "service_count": {
             "type": "integer",
             "minimum": 1,
-            "description": "Number of services in this stack."
+            "description": "Number of services in this stack (within the single monorepo repo, for monorepo mode)."
+          },
+          "repo_count": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Number of independent repos in this stack (workspace mode only). Disambiguates '5 React services in 1 monorepo repo' (service_count=5, repo_count=1) from '5 React repos in a workspace' (service_count=5, repo_count=5). Omitted in single-project and monorepo modes."
           },
           "reference_service": {
             "type": ["string", "null"],

@@ -287,6 +287,80 @@ Step checklist for complex multi-step workflows:
 
 ---
 
+## Umbrella-Root Constraint
+
+All generated skills live at the **umbrella root** (`<repo-root>/.claude/skills/` for single-project and monorepo; `<workspace>/.claude/skills/` for workspace). `/generate` MUST NOT write into any `<umbrella>/<service>/.claude/skills/` path under any mode.
+
+Per-service content that would otherwise live in per-service skills belongs in one of:
+1. Rules with `paths:` globs (conventions — always preferred)
+2. `<umbrella>/.claude/memories/ecosystem.md` (topology facts)
+3. A dispatcher skill with per-service references (Pattern A — see below)
+
+---
+
+## Pattern A — Dispatcher Skill with Per-Service References (v1 standard)
+
+Use Pattern A when the catalog's `proposed_artifacts` contains a skill entry where services in the same stack have meaningfully different procedural content (different entry points, different build commands, different deployment targets).
+
+**Structure:**
+
+```
+<umbrella>/.claude/skills/<concern>/
+├── SKILL.md                    # Dispatcher — enumerates EXACT valid service names; dispatches to references/<svc>.md
+└── references/
+    ├── <service-a>.md          # Per-service content for service-a
+    ├── <service-b>.md          # Per-service content for service-b
+    └── ...
+```
+
+**SKILL.md dispatch contract:**
+
+```markdown
+---
+name: <concern>
+description: >
+  [What the skill does — triggers for any work involving these services].
+---
+
+# <Concern>
+
+## Services
+
+Valid service names (exact): `<service-a>`, `<service-b>`, `<service-c>`
+
+When working with a service:
+1. Match the user's request to an exact service name from the list above.
+2. Load `references/<matched-service>.md`.
+3. Follow the instructions there.
+
+If the service name is ambiguous, ask: "Which service? Valid names: <service-a>, <service-b>, <service-c>"
+```
+
+**Dispatch rules:**
+- Enumerate the exact set of valid service names in SKILL.md (closed-set lookup, not fuzzy matching).
+- Reference filenames MUST exactly match the enumerated names (e.g., `service-a` → `references/service-a.md`).
+- If the user names a service not in the list, ask for clarification — never guess.
+- Keep SKILL.md ≤50 lines; procedural content goes in `references/<svc>.md`.
+
+## Pattern B — Per-Service Skill at Umbrella Root (v2 escape hatch)
+
+Pattern B is documented here for completeness but is OUT OF SCOPE for v1 generation.
+
+Use Pattern B only when a service has such distinctive procedural content that a shared dispatcher cannot represent it (e.g., service A is a CLI tool while service B is a REST API — completely different workflows).
+
+**Structure:**
+
+```
+<umbrella>/.claude/skills/
+├── <service-a>-workflow/SKILL.md   # full skill for service-a
+├── <service-b>-workflow/SKILL.md   # full skill for service-b
+└── ...
+```
+
+Pattern B is the promotion path from Pattern A: when empirical use shows a single reference file is insufficient, promote that service to its own skill. A future `/generate` change will support this promotion automatically.
+
+---
+
 ## Adaptive Skill Depth
 
 **Clean codebase (consistent patterns):**

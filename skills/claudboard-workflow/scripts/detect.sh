@@ -284,6 +284,20 @@ INHERITABLE=(
   github.owner github.repo
 )
 
+# Documented defaults — inheritance for these is a no-op because Phase 2c
+# would write the same value anyway. Keep in sync with
+# references/tracker-config-prompts.md and references/repo-config-prompts.md.
+# Uses a case statement (not `declare -A`) to stay compatible with bash 3.2
+# on stock macOS, where associative arrays are unavailable.
+default_value() {
+  case "$1" in
+    jira.customFields.sprint)              echo "customfield_10001" ;;
+    jira.customFields.acceptanceCriteria)  echo "customfield_12206" ;;
+    github.linkingKeyword)                 echo "Closes" ;;
+    *)                                     echo "" ;;
+  esac
+}
+
 if [[ "$PARENT" != "$PROJECT_PATH" && -d "$PARENT" ]]; then
   for sib in "$PARENT"/*/; do
     [[ -d "$sib" ]] || continue
@@ -301,8 +315,19 @@ if [[ "$PARENT" != "$PROJECT_PATH" && -d "$PARENT" ]]; then
     for f in "${INHERITABLE[@]}"; do
       v=$(printf '%s' "$cfg_json" | jq -r ".$f // empty" 2>/dev/null) || continue
       [[ -z "$v" ]] && continue
+      # Drop stub values left by a prior orchestrator run — inheriting them
+      # would propagate the placeholder, not a real value.
+      [[ "$v" =~ ^\[TODO:\ .*\]$ ]] && continue
+      # Drop values that exactly match the documented default — Phase 2c
+      # would write the same value, so the offer would be a no-op.
+      dv=$(default_value "$f")
+      [[ -n "$dv" && "$v" == "$dv" ]] && continue
       summary=$(printf '%s' "$summary" | jq --arg k "$f" --arg v "$v" '.[$k] = $v')
     done
+
+    # Drop siblings that contributed nothing after filtering — the offer
+    # would be vacuous (y and n produce identical resolved configs).
+    [[ "$summary" == "{}" ]] && continue
 
     SIBLINGS=$(printf '%s' "$SIBLINGS" | jq \
       --arg p "../$(basename "$sib")" --argjson s "$summary" \

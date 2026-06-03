@@ -1,2 +1,2 @@
-{"type":"user","timestamp":"2026-05-31T14:00:00.000Z","message":{"role":"user","content":"/analyse"}}
+{"type":"user","timestamp":"2026-05-31T14:00:00.000Z","message":{"role":"user","content":[{"type":"text","text":"<command-message>claudboard-analyse</command-message>\n<command-name>/claudboard:claudboard-analyse</command-name>\n<command-args></command-args>"}]}}
 {"type":"assistant","requestId":"req-005","timestamp":"2026-05-31T14:00:01.000Z","message":{"role":"assistant","model":"claude-opus-5-0","content":[{"type":"text","text":"Analysing..."}],"usage":{"input_tokens":20000,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"cache_read_input_tokens":0,"output_tokens":0}}}

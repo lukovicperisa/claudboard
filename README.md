@@ -42,7 +42,9 @@ The `/analyse` command scans, detects patterns, and writes:
 - **`.claudboard/catalog.json`** — the primary artifact consumed by `/generate` (structured JSON, versioned schema)
 - **`.claude/reports/claudboard-analysis.md`** — a thin human-readable summary for review before generating
 
-By default, `/analyse` runs a reference-service deep pass per detected stack — cheap enough for large monorepos. Pass `--audit` for full per-service analysis (Watch findings, quality scores, cross-service graphs written to `.claudboard/audits/<svc>.md`).
+By default, `/analyse` runs a reference-service deep pass per detected stack — cheap enough for large monorepos and multi-repo workspaces. Pass `--audit` for full per-service analysis (Watch findings, quality scores, cross-service graphs written to `.claudboard/audits/<svc>.md`).
+
+**Workspace and monorepo modes share one pipeline.** Whether your project is a monorepo (N services, one `.git/`) or a multi-repo workspace (N repos, each with `.git/`), `/analyse` produces a single catalog at the umbrella root. Per-service `.claude/` directories (skills, rules, memories) are not generated — service-specific content lives in rules with `paths:` globs, a single `ecosystem.md` at the umbrella root, and dispatcher skills (Pattern A) where needed.
 
 The `/generate` command reads `.claudboard/catalog.json` and creates `.claude/` artifacts. Best run in a fresh Claude Code session. If you have artifacts from a prior claudboard version (`.claude/reports/cloudboard-analysis.md` only), `/generate` auto-migrates to the catalog format on first run.
 
@@ -83,6 +85,24 @@ If you've previously run `/analyse` without the catalog architecture (older vers
 Your legacy report files are left in place — only the new catalog is written. Subsequent `/generate` runs use the catalog directly and skip migration.
 
 If migration fails (incompatible older format), the error message names the offending file and instructs you to run `/analyse` for a fresh catalog.
+
+### Migration from older claudboard (workspace mode)
+
+If you have previously run `/analyse` in workspace mode, your workspace may have per-repo reports at `<workspace>/.claude/reports/claudboard-analysis-<repo>.md`. These files are not consumed by the current `/generate` — they are superseded by the unified catalog at `<workspace>/.claudboard/catalog.json`. You can leave them on disk (they do no harm) or delete them at leisure:
+
+```bash
+# Remove legacy per-repo workspace reports (optional)
+rm <workspace>/.claude/reports/claudboard-analysis-*.md
+```
+
+If prior `/generate` runs produced per-service `.claude/` directories (e.g. `<workspace>/<repo>/.claude/skills/`, `.claude/rules/`, `.claude/memories/`), those directories are also left on disk by the current claudboard — they simply stop receiving updates. They were never auto-loaded at runtime (Claude Code loads from the session CWD upward, not downward into subdirectories), so they do no harm. Delete them if you want a clean state:
+
+```bash
+# Remove stale per-service .claude/ directories (optional)
+find <workspace> -maxdepth 2 -name '.claude' -not -path '<workspace>/.claude' -exec rm -rf {} +
+```
+
+A future `--prune-stale` flag on `/generate` will automate this cleanup.
 
 ## Lifecycle
 
@@ -178,36 +198,20 @@ Every claudboard run upholds these contracts:
 - `openspec/` — OpenSpec change tracking for development workflow (specs for planned features)
 - `evals/` — Evaluation test cases across diverse repo types
 
-## Per-task cost reporting (optional)
+## Per-task cost reporting
 
-Every `/analyse`, `/generate`, `/refresh`, and `/techdebt` run touches real API tokens. A `Stop` hook lets you see the dollar cost of each individual claudboard task at the moment it finishes — at zero extra API cost, since the hook reads the session JSONL that Claude Code already writes to disk.
+Every `/claudboard:claudboard-{analyse,generate,refresh,techdebt}` run touches real API tokens. A `Stop` hook emits the dollar cost of each individual claudboard task at the moment it finishes — at zero extra API cost, since the hook reads the session JSONL that Claude Code already writes to disk.
+
+**Automatic on plugin install.** The plugin ships `hooks/hooks.json`, so Claude Code registers the Stop hook automatically when the plugin is installed or updated. No settings edit required.
+
+If you don't see a cost line after a `/claudboard:*` task, run `claude --debug` and look for hook errors.
 
 **Expected cost ranges** (asymmetric tier: Opus orchestrator, Sonnet sub-agents):
-- `/analyse` default — single-project: ≤$15; 19-service monorepo: ≤$150
-- `/analyse --audit` — 19-service monorepo: ≤$250 (full per-service fan-out)
-- `/generate` (from catalog) — ≤$25 on a 19-service monorepo
+- `/analyse` default — single-project: ≤$15; monorepo (~19 services): ≤$50; workspace (~14 repos): ≤$80
+- `/analyse --audit` — monorepo or workspace: ≤$250 (full per-service fan-out)
+- `/generate` (from catalog) — ≤$25 on a monorepo or workspace
 
-The `thin-analyse-catalog-primary` change (2026-06-01) documents the measured baseline ($417 all-Opus) and the architectural rationale for the catalog-as-primary approach.
-
-To enable, add the following block to your project's `.claude/settings.local.json` (or the global `~/.claude/settings.json`). Replace `<abs-path>` with the absolute path to this plugin's scripts directory.
-
-```json
-{
-  "hooks": {
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "<abs-path>/skills/claudboard/scripts/stop-hook.sh"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
+The `umbrella-root-artifacts` change (2026-06-02) unified workspace and monorepo modes into one pipeline and removed per-service `.claude/` write paths, bringing workspace-mode costs from $400-class to the same tier as monorepo.
 
 **Example output** (appears in the Claude Code transcript after the task ends):
 
@@ -222,7 +226,7 @@ Cost for /analyse: $1.43 (Opus 4.7, 8 calls, 6K out) (in progress)
 ```
 
 **Details:**
-- **Gated triggers** — the hook fires on every Stop event but only emits a cost line when the most recent user message begins with `/analyse`, `/generate`, `/refresh`, or `/techdebt`. Conversational turns are ignored.
+- **Gated triggers** — the hook fires on every Stop event but only emits a cost line when the most recent user turn contains `/claudboard:claudboard-analyse` (or the bare `/analyse` form). Conversational turns are ignored.
 - **Slice semantics** — the cost covers the slice from the matching trigger prompt to now, so running `/analyse` then `/generate` in the same session produces two independent cost lines, not an accumulating total.
 - **Zero API tokens** — the hook runs bash + jq against the on-disk JSONL, no model is involved.
 - **Known limitation** — the gate is a heuristic: if you type `/analyse` in chat without invoking the skill, the next Stop event will emit a (near-zero) cost line. This is harmless.

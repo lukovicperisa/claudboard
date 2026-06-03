@@ -31,12 +31,14 @@ Path defaults to the current working directory. Works on any language/framework.
 |---|---|---|
 | `.claudboard/catalog.json` | Always | Always (`from_audit: true`) |
 | `.claude/reports/claudboard-analysis.md` | Always (thin) | Always |
+| `.claude/memories/ecosystem.md` | Always (monorepo/workspace) | Always (monorepo/workspace) |
 | `.claudboard/audits/<svc>.md` | Not produced | One per service |
 | Per-service deep pass (Phases 1c-1h) | Reference service per stack only | All services via Sonnet sub-agents |
-| Cost (craftsphere.cloud 19-service) | ≤$150 | ≤$250 |
+| Cost (craftsphere.cloud monorepo, ~19-service) | ≤$50 | ≤$250 |
+| Cost (MEAS workspace, ~14 repos) | ≤$80 | ≤$250 |
 | Cost (single-project ~500 files) | ≤$15 | ≤$15 (no-op in v1) |
 
-Default mode runs one reference-service deep pass per detected stack — enough to populate all catalog fields. `--audit` fans out to every service. Cost context: all-Opus fan-out on craftsphere.cloud measured $417; asymmetric tier targets ≤$150/≤$250 (see `thin-analyse-catalog-primary` design.md).
+Default mode runs one reference-service deep pass per detected stack — same pipeline for single-project, monorepo, and workspace modes. `--audit` fans out to every service. Cost context: all-Opus fan-out measured $417; asymmetric tier model targets ≤$50/≤$80 default (see `umbrella-root-artifacts` design.md).
 
 ### Model tiers
 
@@ -141,93 +143,22 @@ Wait for user to confirm or correct misclassifications before proceeding.
 
 **Flow Summary:**
 
-- **Single-project:** Phases 1b-1h run once for the whole repo.
-- **Monorepo:** Phase 1b runs once (global scope), then Phases 1c-1h run once per service.
-- **Workspace:** Phase 1b runs once per repo (no global scope), then new Phase 1c (graph construction) and Phase 1d (ecosystem injection) run once after all repos analyzed.
+All three modes share the same pipeline after detection. The detected mode affects only where `umbrella_root` points on disk.
 
-### Workspace parallelisation protocol (workspace mode only)
+- **Single-project:** Phases 1b-1h run once for the whole repo. Phase 1i (graph/ecosystem) produces a minimal ecosystem.md noting no cross-service deps, or omits it.
+- **Monorepo:** Phase 1b runs once (global scope). Default: Phases 1c-1h on ONE reference service per stack. `--audit`: Phases 1c-1h on ALL services via Sonnet sub-agents. Then Phase 1i.
+- **Workspace:** Same pipeline as monorepo. Detection sets `umbrella_root = <workspace-dir>`. Default: ONE reference service per stack (across all repos). `--audit`: ALL services via Sonnet sub-agents. Then Phase 1i.
 
-**Run immediately after presenting the topology (Step 3), before any per-repo work begins.**
+**`umbrella_root` computation (do this immediately after detection):**
+- Single-project / Monorepo: `umbrella_root = <repo-root>`
+- Workspace: `umbrella_root = <workspace-dir>` (`.claude/` is accessible via meta-repo symlink)
 
-**Step 1: Pre-create report directory**
+All Phase 3 writes use `<umbrella_root>/.claudboard/...` and `<umbrella_root>/.claude/...`.
 
-```bash
-mkdir -p "<workspace>/.claude/reports"
-```
-
-Create this directory before spawning any sub-agents. This is idempotent and must complete before fan-out.
-
-**Step 2: Dispatch parallel sub-agents — one per service repo**
-
-Spawn ALL service-repo sub-agents in a **single tool-call message** (one Agent invocation per repo, all in the same batch). Do NOT dispatch sequentially.
-
-Library repos are NOT delegated — the orchestrator handles them directly with a lighter scan (identity, dependency list, publish target) and produces their per-repo report inline.
-
-Sub-agent prompt template (fill in `<repo-path>`, `<report-path>`, `<workspace-root>` for each repo):
-
-```
-You are a code analysis agent. Analyse the service repo at:
-  <repo-path>
-
-Scope: run claudboard-analyse Phases 1b–1h scoped entirely to <repo-path>.
-Load stack-detectors.md, run Wide Scan, Strategic Sampling, call-path tracing,
-duplication detection, and existing .claude/ inventory exactly as specified in
-the analyse SKILL.md. Do NOT analyse any other repo or the workspace root.
-
-After completing analysis, write the FULL analysis report (including all Phase 2
-content: What/How/Why/Quality Assessment/Proposed Artifacts/Workflow Signals)
-to this exact absolute path BEFORE returning:
-  <report-path>
-
-Write ONLY to <report-path>. Do NOT also write to <repo-path>/.claude/reports/.
-The workspace report directory is the single source of truth — per-repo copies
-are not created in workspace mode.
-
-The report MUST include this YAML frontmatter:
----
-generated_at: <ISO 8601 timestamp>
-repo: <repo-path>
-workspace_member: true
-workspace_root: <workspace-root>
-version: "2.1.0"
----
-
-After writing the file, return ONLY the following compact YAML summary block
-(do not return the full report — the orchestrator has access to the file):
-
-service_identity: <resolved service name>
-inbound:
-  rest_endpoints: <count>
-  kafka_topics_consumed: [<topic>, ...]
-  solace_topics_consumed: [<topic>, ...]
-outbound:
-  feign_clients: [<name>, ...]
-  kafka_topics_produced: [<topic>, ...]
-  solace_topics_produced: [<topic>, ...]
-quality_avg: <X.X>
-watch_top3:
-  - <finding 1>
-  - <finding 2>
-  - <finding 3>
-```
-
-The orchestrator uses these YAML summaries for Phase 1c graph construction without re-reading all per-repo reports.
-
-**Step 3: Write-verification and serial recovery**
-
-After all sub-agents return, verify that every expected report file exists:
-
-```bash
-# Check for each expected repo report
-ls "<workspace>/.claude/reports/claudboard-analysis-<repo-name>.md"
-```
-
-For any missing report file (sub-agent failed or returned without writing):
-- Re-run that single repo's analysis serially (do not re-run the full batch)
-- Use the same phases and report format
-- Write the missing file before proceeding
-
-Do NOT proceed to Phase 1c until all expected per-repo report files are confirmed on disk.
+**D6: Workspace without bootstrapped meta-repo.** If workspace mode is detected and `<workspace>/.claude` is NOT a symlink, proceed anyway:
+- Create `<workspace>/.claudboard/` and `<workspace>/.claude/reports/` and `<workspace>/.claude/memories/` inline.
+- Complete the full analysis and write all outputs normally.
+- At Phase 3 completion, print one line: `"Workspace is not bootstrapped under git — run /claudboard-workspace-init to share .claude/ across the team."`
 
 ### 1b. Global scan (runs once for both single-project and monorepo)
 
@@ -253,9 +184,9 @@ In a single pass, check for all of the following in parallel:
 - Branch strategy and commit conventions: from root README, `.git/config`, CI pipeline naming patterns
 - Top-level directory structure (annotate each dir as service / library / infra / docs)
 
-**For workspace mode, additionally extract per repo:**
+**For monorepo and workspace modes, additionally extract per service/repo (before reference-service selection):**
 
-Before running Phases 1c-1h for each repo, extract:
+Before running Phases 1c-1h for the reference service, extract for ALL detected services:
 
 1. **Service identity** (task 3.3):
    - Follow `../claudboard/references/stack-detectors.md` → "Service Identity Resolution"
@@ -279,11 +210,11 @@ Skip: `node_modules/`, `.git/`, `dist/`, `build/`, `target/`, `__pycache__/`, `.
 
 ---
 
-> **Monorepo mode — default mode:** Run Phases 1c through 1h on ONE reference service per detected stack (pick the most representative: most files, most complete Dockerfile, or explicitly named reference service). This populates `patterns`, `conventions`, and `adaptive_depth` in the catalog. Do NOT run the full per-service loop in default mode.
+> **Default mode (all modes):** Run Phases 1c through 1h on ONE reference service per detected stack. Pick the most representative: most files, most complete Dockerfile, or explicitly named reference service. This populates `patterns`, `conventions`, and `adaptive_depth` in the catalog. Do NOT run the full per-service loop in default mode — applies equally to single-project, monorepo, and workspace.
 >
-> **Monorepo mode — `--audit` mode:** Fan out Phases 1c-1h to EVERY detected service (not library) via parallel Sonnet sub-agents. Each spawned `Agent` call SHALL specify `model: "claude-sonnet-4-6"` explicitly.
+> **`--audit` mode (all modes):** Fan out Phases 1c-1h to EVERY detected service (not library) via parallel Sonnet sub-agents. Each spawned `Agent` call SHALL specify `model: "claude-sonnet-4-6"` explicitly. Output: one `.claudboard/audits/<svc>.md` per service.
 >
-> **Workspace mode:** Per-repo loop unchanged — identity extraction + Phases 1c-1h per repo, then Phase 1c graph construction. Catalog-first adaptation deferred to follow-up change.
+> **Per-service identity + surface extraction (monorepo and workspace, before reference selection):** For EACH detected service/repo, extract identity and communication surface (lightweight — no deep pass). Runs before reference-service selection. This data feeds Phase 1i (graph construction + ecosystem.md).
 
 ---
 
@@ -330,7 +261,7 @@ After reading the discovery JSON, load these reference files **only when the sig
 | `ref_load_signals.graphql` | `../claudboard/references/edges/graphql.md` | any GraphQL/Apollo marker found |
 | `ref_load_signals.architectural` | `../claudboard/references/patterns/architectural.md` | any Saga/CQRS/Outbox/EventStore marker found |
 
-`workflow-signals.md` is **always** loaded (dispatcher schema). `edges/sync-rpc.md` is **always** loaded in workspace mode for REST/gRPC edge detection.
+`workflow-signals.md` is **always** loaded (dispatcher schema). `edges/sync-rpc.md` is **always** loaded in monorepo and workspace modes for REST/gRPC edge detection.
 
 #### Fallback (discover.sh unavailable)
 
@@ -443,150 +374,85 @@ If `.claude/` exists:
 
 ---
 
-### NEW PHASE 1c: Cross-Service Dependency Graph Construction (workspace mode only)
+### Phase 1i: Cross-Service Graph & Ecosystem.md (monorepo and workspace modes)
 
-**Run this phase ONLY in workspace mode**, after all per-repo analyses (Phases 1b-1h) are complete for every service repo.
+**Run after all reference-service deep passes (and after all sub-agent passes in `--audit` mode).** Uses the service identity and communication surface data extracted in Phase 1b. The orchestrator writes this phase — sub-agents do not have graph context.
 
-Using the service identity and communication surface data extracted in Phase 1b, build a directed dependency graph.
+**Skip for single-project mode:** No graph to build. Omit ecosystem.md or write a one-line "standalone service — no cross-service dependencies" stub.
 
-**Step 1: Match outbound references against inbound surfaces** (task 5.1)
+**Step 1: Build dependency graph**
 
-For each repo A:
-  For each outbound reference in A:
-    For each repo B (where B ≠ A):
-      - **REST match:** outbound FeignClient `name` or URL segment contains B's identity → edge A→B (REST)
-      - **Kafka match:** outbound producer topic name equals B's inbound consumer topic name (exact string match) → edge A→B (Kafka)
-      - **Solace match:** outbound SCS/JCSMP topic equals B's inbound SCS/JCSMP topic (exact string match) → edge A→B (Solace)
-      - **No match:** record as "external dependency (unresolved)" → A → `[service-name] (external)` (task 5.2)
+For each service A, for each outbound reference in A, for each service B (B ≠ A):
+- **REST match:** outbound FeignClient `name` or URL segment contains B's identity → edge A→B (REST)
+- **Kafka match:** outbound producer topic equals B's inbound consumer topic (exact match) → edge A→B (Kafka)
+- **Solace match:** outbound SCS/JCSMP topic equals B's inbound SCS/JCSMP topic (exact match) → edge A→B (Solace)
+- **No match:** record as `A → [service-name] (external)`
 
-**Step 2: Classify coupling strength per edge** (task 5.3)
+**Step 2: Classify coupling strength**
 
-For each edge in the graph:
-
-| Edge Type | Coupling Strength | Condition |
-|-----------|------------------|-----------|
-| REST | **TIGHT** | No `@CircuitBreaker`, `@Retry`, or Resilience4j config detected in caller |
-| REST | **MODERATE** | `@CircuitBreaker`, `@Retry`, or Resilience4j config detected in caller |
+| Edge Type | Coupling | Condition |
+|-----------|----------|-----------|
+| REST | **TIGHT** | No `@CircuitBreaker`, `@Retry`, or Resilience4j config in caller |
+| REST | **MODERATE** | `@CircuitBreaker`, `@Retry`, or Resilience4j config detected |
 | Kafka/Solace async | **LOOSE** | Always |
-| Shared DB | **TIGHT** | Same DB connection string in multiple repos (if detected) |
+| Shared DB | **TIGHT** | Same DB connection string in multiple services |
 
-Grep for resilience patterns in the calling repo:
-```bash
-# Circuit breaker detection
-grep -r '@CircuitBreaker\|@Retry\|resilience4j' --include='*.java' src/
+**Step 3: Detect compound patterns**
 
-# Feign client resilience config
-grep -r 'feign.circuitbreaker.enabled' --include='*.yml' --include='*.properties' .
-```
+- **Synchronous chain:** A→B→C where all edges are REST/TIGHT → flag latency/cascade risk
+- **Circular dependency:** A→B→A (any protocol) → flag as architectural risk
 
-**Step 3: Detect compound patterns** (tasks 5.4-5.5)
+**Step 4: Present graph for review**
 
-- **Synchronous chain** (task 5.4): A→B→C where all edges are REST/TIGHT
-  - Flag: "Latency amplification and failure cascade risk — synchronous chain: A→B→C"
+Display edges, coupling classifications, and warnings. Wait for user confirmation (or corrections). If user edits, re-present adjusted graph.
 
-- **Circular dependency** (task 5.5): A→B→A (any protocol)
-  - Flag: "Circular dependency — architectural risk: A ↔ B"
+**Step 5: Write umbrella ecosystem.md**
 
-**Step 4: Present graph for review** (task 5.6)
+Path: `<umbrella_root>/.claude/memories/ecosystem.md` — ONE file at the umbrella root, covering ALL services.
 
-Display the full graph to the user with edges, coupling classifications, and warnings:
-
-```
-Cross-Service Dependency Graph:
-
-Edges:
-  order-service ──REST/TIGHT──▶ user-service
-  order-service ──Kafka/LOOSE──▶ notification-service
-  user-service ──REST/MODERATE──▶ auth-service
-  frontend ──REST/TIGHT──▶ order-service
-  frontend ──REST/TIGHT──▶ user-service
-
-External Dependencies (unresolved):
-  order-service → payment-gateway (REST, not in workspace)
-
-Warnings:
-  ⚠ TIGHT: order-service → user-service (REST, no circuit breaker)
-  ⚠ TIGHT: frontend → order-service (REST, no circuit breaker)
-
-Proceed with ecosystem injection? [y/n/edit]
-```
-
-Wait for user confirmation before proceeding to Phase 1d.
-
-If user selects "edit" or indicates corrections, adjust the graph and re-present.
-
----
-
-### NEW PHASE 1d: Ecosystem Context Injection (workspace mode only)
-
-**Run this phase ONLY in workspace mode**, after user confirms the graph in Phase 1c.
-
-> **Authorship:** ecosystem.md files are written by the **orchestrator** during this phase, NOT by per-repo sub-agents — sub-agents have no graph context.
-
-For each **service repo** (not library repos, not workspace root):
-
-**Step 1: Write `.claude/memories/ecosystem.md`** (task 6.1)
-
-Path: `<repo-dir>/.claude/memories/ecosystem.md`
-
-Skip:
-- Library repos (excluded from service list in Phase 1a)
-- Workspace root directory (no file written there)
-
-**Step 2: Populate file content** (tasks 6.2-6.7)
+> **Authorship:** written by the **orchestrator** only — never by per-service sub-agents (they lack graph context).
 
 ```markdown
-<!-- Managed by claudboard — do not edit manually. Run /refresh from workspace root to update. -->
+<!-- Managed by claudboard — do not edit manually. Re-run /analyse from umbrella root to update. -->
 
-# Ecosystem Context: <service-name>
+# Ecosystem Map
 
-## Role
+## Services
 
-<one sentence describing this service's position and purpose in the ecosystem, inferred from its inbound/outbound surface and name>
+| Service | Stack | Role |
+|---------|-------|------|
+| <service-name> | <stack> | <one-sentence role> |
+| ... | | |
 
-## Depends On
+## Dependency Graph
 
-| Service | Protocol | Purpose | Source File |
-|---------|----------|---------|-------------|
-| <target> | REST (sync) | <inferred purpose> | <FeignClient file or RestTemplate usage file> |
-| <target> | Kafka (async) | <inferred purpose> | <producer class> |
-| <target> | Solace (async) | <inferred purpose> | <publisher class or config> |
-| <external-service> | REST | [external — not in workspace] | <source file> |
-
-## Used By
-
-| Service | Protocol | How |
-|---------|----------|-----|
-| <caller> | REST | <endpoint paths called> |
-| <caller> | Kafka | consumes topic: <topic-name> |
-| <caller> | Solace | consumes topic: <topic-name> |
+| From | To | Protocol | Coupling | Source File |
+|------|-----|----------|----------|-------------|
+| <service-a> | <service-b> | REST | TIGHT | <FeignClient file> |
+| <service-a> | <service-c> | Kafka | LOOSE | <producer class> |
+| <service-x> | [external] | REST | — | <source file> |
 
 ## Shared Contracts
 
 **Kafka/Solace Topics:**
-- `topic-name` (producer/consumer) — <schema file if detected, otherwise "schema not detected">
+- `topic-name` — <service-a> (producer) → <service-b> (consumer) — <schema file if detected>
 
-**OpenAPI Spec:**
-- `<path-to-openapi-spec>` (if detected via `springdoc-openapi` or manual `openapi.yaml`)
+**OpenAPI Specs:**
+- `<service>/<path>` (if detected)
 
 ## Coupling Warnings
 
-⚠ **TIGHT:** REST call to <target-service> has no circuit breaker — if <target> is unavailable, <this-service> fails (file: <source>)
-
-⚠ **TIGHT:** <caller-service> calls this service synchronously with no circuit breaker
-
-⚠ **Synchronous chain:** <service-a> → <this-service> → <service-b> — latency amplifies, failure cascades
-
-⚠ **Circular dependency:** <this-service> ↔ <other-service>
+⚠ **TIGHT:** <service-a> → <service-b> (REST, no circuit breaker)
+⚠ **Synchronous chain:** <a> → <b> → <c> — latency amplifies, failure cascades
+⚠ **Circular dependency:** <a> ↔ <b>
 ```
 
-**Content population rules:**
-
-- **Role** (task 6.3): Infer from service name, inbound/outbound count, and protocol types (e.g., "order-service is the core transactional service, handling order creation and exposing REST endpoints to frontend; publishes order events to Kafka")
-- **Depends On** (task 6.4): One row per outbound edge; for external unresolved deps, mark as `[external — not in workspace]`
-- **Used By** (task 6.5): One row per inbound edge from the graph
-- **Shared Contracts** (task 6.6): List unique topics this service publishes or consumes; detect OpenAPI spec from `@OpenAPIDefinition` or `springdoc.api-docs.path` config or `openapi.yaml` file presence
-- **Coupling Warnings** (task 6.7): List all TIGHT edges involving this service (both as caller and callee), synchronous chains, circular dependencies
+**Content rules:**
+- **Services table:** one row per detected service (not library).
+- **Dependency Graph:** one row per cross-service edge (from graph above).
+- **Shared Contracts:** unique topics and their producer/consumer pairs.
+- **Coupling Warnings:** all TIGHT edges, chains, and circular deps from the graph.
+- Target: one file under 5KB (well within Claude Code's memory file size budget).
 
 ---
 
@@ -597,7 +463,7 @@ After Wide Scan, compute workflow signals and detect architectural patterns. The
 Load `../claudboard/references/workflow-signals.md` for the schema, sub-catalog pointers, and detection heuristics.
 
 **Workflow Signals — detect and record:**
-1. **Cross-service edges** — from Wide Scan transport hits; load `edges/sync-rpc.md`, `edges/messaging.md`, `edges/streaming.md`, `edges/graphql.md` for per-transport extraction rules (workspace mode only; in single-repo mode emit `cross_service_edges: []`)
+1. **Cross-service edges** — from Wide Scan transport hits; load `edges/sync-rpc.md`, `edges/messaging.md`, `edges/streaming.md`, `edges/graphql.md` for per-transport extraction rules (monorepo and workspace modes; in single-project mode emit `cross_service_edges: []`)
 2. **Shared libraries** — from dependency analysis (workspace/monorepo mode only)
 3. **Auth perimeter** — from security scan results in Wide Scan
 4. **Ticket prefix** — from `git log --oneline -50` and `git branch -a` (run these commands)
@@ -662,33 +528,48 @@ The human-readable summary and audit files use YAML frontmatter (`generated_at`,
 ### Step 1: Create output directories
 
 ```bash
-mkdir -p <project-root>/.claudboard          # catalog + audits
-mkdir -p <project-root>/.claude/reports      # human-readable summary
-mkdir -p <project-root>/.claudboard/audits   # only if --audit
-# Workspace: mkdir -p <workspace>/.claudboard && mkdir -p <workspace>/.claude/reports
+mkdir -p <umbrella_root>/.claudboard           # catalog + audits
+mkdir -p <umbrella_root>/.claude/reports       # human-readable summary
+mkdir -p <umbrella_root>/.claude/memories      # ecosystem.md (monorepo/workspace)
+mkdir -p <umbrella_root>/.claudboard/audits    # only if --audit
 ```
+
+`<umbrella_root>` is computed in Phase 1a. For workspace mode, if the meta-repo symlink is not set up, these directories are created inline at the workspace directory (D6).
 
 ### Step 2: Write output files using the Write tool
 
 **Use the Write tool to create each file. Displaying content to the user does NOT substitute for writing it to disk.**
 
-#### Always written (both modes)
+#### Always written (all modes)
 
-**`.claudboard/catalog.json`** — primary artifact. Write first. Conforms to `catalog-schema.json`. Set `schema_version: "1"`, `from_audit: <bool>`. Include `audit_summary` only when `from_audit: true`.
+**`<umbrella_root>/.claudboard/catalog.json`** — primary artifact. Write first. Conforms to `catalog-schema.json`. Set `schema_version: "1"`, `from_audit: <bool>`, `umbrella_root: <path>`. Include `audit_summary` only when `from_audit: true`.
 
-**`.claude/reports/claudboard-analysis.md`** — thin summary (80-150 lines single-project, 150-250 monorepo). Include topology overview, detected conventions, proposed artifacts list. Default mode: note "Run `/analyse --audit` for per-service detail." Audit mode: cross-reference `.claudboard/audits/<svc>.md`. Do NOT include per-service Watch findings or quality scores in default mode.
+**`<umbrella_root>/.claude/reports/claudboard-analysis.md`** — thin summary (80-150 lines single-project, 150-250 monorepo/workspace). Include topology overview, detected conventions, proposed artifacts list. Default mode: note "Run `/analyse --audit` for per-service detail." Audit mode: cross-reference `.claudboard/audits/<svc>.md`. Do NOT include per-service Watch findings or quality scores in default mode.
+
+#### Written in monorepo and workspace modes (not single-project)
+
+**`<umbrella_root>/.claude/memories/ecosystem.md`** — cross-service topology map. Written by orchestrator in Phase 1i. Covers all detected services, their dependency graph, shared contracts, and coupling warnings.
 
 #### Written only in `--audit` mode
 
-**`.claudboard/audits/<service-dir-name>.md`** — full per-service report (Watch findings, 8-dimension quality scores, call-path traces, cross-service Kafka graph). YAML frontmatter: `monorepo_service: true`, `generated_at`, `repo`.
+**`<umbrella_root>/.claudboard/audits/<service-dir-name>.md`** — full per-service report (Watch findings, 8-dimension quality scores, call-path traces, cross-service graph). YAML frontmatter: `service: <name>`, `generated_at`, `repo`.
 
-Write catalog → summary → audit files. **Workspace mode:** unchanged (per-repo reports in `<workspace>/.claude/reports/`; no catalog in v1).
+Write catalog → summary → ecosystem.md → audit files (in that order).
 
 **If any Write tool call fails** (permission error, disk full, path conflict): report the error to the user and stop. Do not proceed to Step 3. Do not claim the analysis is saved.
 
 ### Step 3: Confirm save and recommend next steps
 
-Confirm written paths (`.claudboard/catalog.json`, `.claude/reports/claudboard-analysis.md`, `.claudboard/audits/<svc>.md` if `--audit`). Then:
+Confirm written paths:
+- `<umbrella_root>/.claudboard/catalog.json`
+- `<umbrella_root>/.claude/reports/claudboard-analysis.md`
+- `<umbrella_root>/.claude/memories/ecosystem.md` (monorepo/workspace only)
+- `<umbrella_root>/.claudboard/audits/<svc>.md` (if `--audit`)
+
+If workspace mode was detected without a bootstrapped meta-repo (D6), print:
+> **Workspace is not bootstrapped under git — run `/claudboard-workspace-init` to share `.claude/` across the team.**
+
+Then:
 
 > Run `/generate` in a fresh session to produce CLAUDE.md, rules, and skills from the catalog. (Fresh session recommended.) For per-service Watch findings, run `/analyse --audit`. For tech debt, run `/techdebt`.
 
@@ -707,11 +588,12 @@ If user wants to generate now: proceed with `../claudboard-generate/SKILL.md` Ph
 
 ## Constraints
 
-- **Read-only for source code.** Files written:
-  - **Always (any mode):** `.claudboard/catalog.json` (primary artifact), `.claude/reports/claudboard-analysis.md` (thin summary)
-  - **`--audit` only, monorepo/single-project:** `.claudboard/audits/<service-name>.md` per service
-  - **Workspace mode (unchanged):** `<workspace>/.claude/reports/claudboard-analysis-workspace.md` (orchestrator), `<workspace>/.claude/reports/claudboard-analysis-<repo>.md` per service repo (sub-agents), `<repo>/.claude/memories/ecosystem.md` per service repo (orchestrator). No catalog produced in workspace mode in v1.
-- **`.claudboard/catalog.json` is the primary artifact contract.** Per-service audit reports at `.claudboard/audits/` are opt-in via `--audit`. `.claude/reports/claudboard-analysis.md` is the human-readable summary; it is thin and does not duplicate catalog content.
+- **Read-only for source code.** Files written (all at `<umbrella_root>/`):
+  - **Always (any mode):** `<umbrella_root>/.claudboard/catalog.json` (primary artifact), `<umbrella_root>/.claude/reports/claudboard-analysis.md` (thin summary)
+  - **Monorepo and workspace (not single-project):** `<umbrella_root>/.claude/memories/ecosystem.md` (cross-service topology)
+  - **`--audit` only:** `<umbrella_root>/.claudboard/audits/<service-name>.md` per service
+  - **Never writes into `<umbrella>/<service>/.claude/`** — per-service `.claude/` directories are NOT written by `/analyse`.
+- **`<umbrella_root>/.claudboard/catalog.json` is the primary artifact contract.** Per-service audit reports at `.claudboard/audits/` are opt-in via `--audit`. `.claude/reports/claudboard-analysis.md` is the human-readable summary; it is thin and does not duplicate catalog content.
 - **Never modify source code, tests, or existing files.**
 - **Max ~50 source files read** for large repos — note sampling in report.
 - **Secrets found during scan:** Report file:line only, never print the value.
@@ -728,7 +610,7 @@ If user wants to generate now: proceed with `../claudboard-generate/SKILL.md` Ph
 | `../claudboard/references/workflow-signals.md` | Phase 1 (after Wide Scan) — always load; workflow signal schema, sub-catalog pointers, shared-lib and auth-perimeter detection |
 | `../claudboard/references/catalog-schema.json` | Phase 3 — catalog output contract; load to validate field set before writing |
 | `../claudboard/references/catalog-format.md` | Phase 3 — human explainer for catalog fields, regeneration rules, .gitignore guidance |
-| `../claudboard/references/edges/sync-rpc.md` | Phase 1 — always load in workspace mode; REST/gRPC/tRPC transport extraction |
+| `../claudboard/references/edges/sync-rpc.md` | Phase 1 — always load in monorepo and workspace modes; REST/gRPC/tRPC transport extraction |
 | `../claudboard/references/edges/messaging.md` | **Gated:** load only when `ref_load_signals.messaging == true` |
 | `../claudboard/references/edges/streaming.md` | **Gated:** load only when `ref_load_signals.streaming == true` |
 | `../claudboard/references/edges/graphql.md` | **Gated:** load only when `ref_load_signals.graphql == true` |

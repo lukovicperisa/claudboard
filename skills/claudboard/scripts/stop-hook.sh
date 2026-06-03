@@ -9,14 +9,6 @@
 #
 # No model API calls are made — this script runs at $0 API token cost.
 #
-# Installation (in .claude/settings.json or settings.local.json):
-#   "hooks": {
-#     "Stop": [{
-#       "matcher": "",
-#       "hooks": [{"type":"command","command":"/abs/path/to/stop-hook.sh"}]
-#     }]
-#   }
-
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,7 +29,8 @@ fi
 [[ ! -f "$JSONL_PATH" ]] && exit 0
 
 # ── find the most recent claudboard trigger ────────────────────────────────────
-# Walk user turns and match /analyse /generate /refresh /techdebt.
+# Requires the <command-name>...</command-name> wrapper — free-text chat that
+# merely mentions the verbs will never match.
 TRIGGER_JSON=$(jq -sc '
   [.[] | select(.type == "user")]
   | map(
@@ -47,9 +40,11 @@ TRIGGER_JSON=$(jq -sc '
         elif type == "array"  then (.[0].text? // "")
         else ""
         end) as $text |
-      select($text | test("^[[:space:]]*/(?:analyse|generate|refresh|techdebt)\\b")) |
+      select($text | test("<command-name>/(?:claudboard:claudboard-)?(?:analyse|generate|refresh|techdebt)</command-name>")) |
       { timestamp: $ts,
-        cmd: ($text | capture("^[[:space:]]*/(?<c>analyse|generate|refresh|techdebt)\\b") | .c) }
+        cmd: ($text
+          | capture("<command-name>/(?:claudboard:claudboard-)?(?<c>analyse|generate|refresh|techdebt)</command-name>")
+          | .c) }
     )
   | last? // null
 ' "$JSONL_PATH" 2>/dev/null) || exit 0
@@ -59,31 +54,22 @@ TRIGGER_JSON=$(jq -sc '
 TRIGGER_TS=$(printf '%s' "$TRIGGER_JSON" | jq -r '.timestamp')
 TRIGGER_CMD=$(printf '%s' "$TRIGGER_JSON" | jq -r '.cmd')
 
-# ── in-progress detection ─────────────────────────────────────────────────────
-# Most recent assistant entry with AskUserQuestion tool_use after the trigger
-# timestamp => task is paused, not complete.
-IN_PROGRESS=false
-LAST_AQ_TS=$(jq -sc '
-  [.[] |
-    select(.type == "assistant") |
-    select(.message.content != null) |
-    select(.message.content | type == "array") |
-    select(.message.content |
-      map(select(.type == "tool_use" and .name == "AskUserQuestion")) | length > 0)
-  ] | if length > 0 then .[-1].timestamp else null end
-' "$JSONL_PATH" 2>/dev/null) || true
+# ── emit-once gate ────────────────────────────────────────────────────────────
+# Extract sessionId from the JSONL (first entry that has it); fall back to env.
+SESSION_ID=$(jq -r 'select(.sessionId != null) | .sessionId' "$JSONL_PATH" 2>/dev/null | head -1)
+SESSION_ID="${SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}"
 
-LAST_AQ_TS=$(printf '%s' "$LAST_AQ_TS" | jq -r '.')
-if [[ -n "$LAST_AQ_TS" && "$LAST_AQ_TS" != "null" && "$LAST_AQ_TS" > "$TRIGGER_TS" ]]; then
-  IN_PROGRESS=true
-fi
+CWD_SLUG=$(pwd | sed 's|/|-|g')
+MARKER_DIR="${HOME}/.claude/projects/${CWD_SLUG}/.claudboard-cost-emitted"
+MARKER_FILE="${MARKER_DIR}/${SESSION_ID}__${TRIGGER_TS}.marker"
+
+[[ -f "$MARKER_FILE" ]] && exit 0
 
 # ── emit cost line ────────────────────────────────────────────────────────────
 COST_LINE=$("$COMPUTE" --since "$TRIGGER_TS" --task "$TRIGGER_CMD" "$JSONL_PATH" 2>/dev/null) || exit 0
 [[ -z "$COST_LINE" ]] && exit 0
 
-if $IN_PROGRESS; then
-  echo "$COST_LINE (in progress)"
-else
-  echo "$COST_LINE"
-fi
+jq -nc --arg msg "$COST_LINE" '{systemMessage: $msg}'
+
+mkdir -p "$MARKER_DIR" || true
+printf '%s\n' "$COST_LINE" > "$MARKER_FILE" || true

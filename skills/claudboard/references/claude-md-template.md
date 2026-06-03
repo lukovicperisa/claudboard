@@ -89,6 +89,18 @@ Build state from `/analyse` lives in `.claudboard/` (not loaded by Claude Code a
 - [Rule 1] — [brief reason why it matters]
 - [Rule 2]
 ...
+
+[Include this section only when the project has .claudboard/:]
+## How This Project Is Onboarded
+
+Claude's understanding of this project was bootstrapped by claudboard:
+
+- **Convention catalog:** `.claudboard/catalog.json` — source of truth for regeneration; re-run `/analyse` to refresh.
+- **Cross-service topology:** `.claude/memories/ecosystem.md` — service roles, dependency graph, coupling warnings (auto-loaded).
+[If dispatcher skill was generated:]
+- **Service-specific workflows:** `.claude/skills/[skill-name]/` — dispatcher skill with per-service references.
+
+To regenerate artifacts after major codebase changes: run `/analyse` → `/generate` in a fresh session.
 ```
 
 ---
@@ -213,6 +225,64 @@ Example: "craftsphere is a B2B SaaS monorepo with 3 backend microservices (Java 
 - [Rule 1] — [brief reason]
 - [Rule 2]
 ...
+
+## How This Project Is Onboarded
+
+- **Convention catalog:** `.claudboard/catalog.json` — re-run `/analyse` to refresh after major changes.
+- **Cross-service topology:** `.claude/memories/ecosystem.md` (auto-loaded from repo root).
+[If dispatcher skill generated:]
+- **Service-specific workflows:** `.claude/skills/[skill-name]/` — dispatcher with per-service references.
+
+Each service directory has its own `CLAUDE.md` with service-specific build commands and quirks.
+```
+
+---
+
+---
+
+## Per-Service CLAUDE.md Template (workspace and monorepo)
+
+Use this when generating a per-service `CLAUDE.md` under the umbrella. Target: ≤30 lines. This file is loaded by Claude Code's dynamic down-walk when an agent reads any file in that service subdirectory. Keep it short — detailed conventions live in umbrella rules and ecosystem.md.
+
+```markdown
+# CLAUDE.md — <service-name>
+
+This service is the **<role>** (<stack>).
+
+For workspace/monorepo conventions, cross-service topology, and dependency maps: see the umbrella `.claude/memories/ecosystem.md` and `.claude/rules/*.md` (auto-loaded when working from the repo root).
+
+## Quick Reference
+
+- **Entry point:** `<main file or module>`
+- **Build:** `<build command>`
+- **Test:** `<test command>`
+- **Deploy target:** `<environment / Kubernetes namespace / pipeline>`
+
+## Service-Specific Notes
+
+- `<Any quirks unique to this service — atypical patterns, known tech debt, special constraints>`
+- `<Leave blank if no service-specific notes>`
+```
+
+**Per-service CLAUDE.md rules:**
+- ≤30 lines total (target 15-20).
+- Reference `ecosystem.md` rather than duplicating its content.
+- Do NOT copy conventions from rules into this file — rules are auto-loaded.
+- Write only what is specific to THIS service and would surprise an agent reading a file here for the first time.
+
+## Umbrella CLAUDE.md Services Section
+
+When the project has multiple services, the umbrella CLAUDE.md gains a "Services" section listing each service with a one-line description. Add this after the Project Overview:
+
+```markdown
+## Services
+
+| Service | Stack | Directory | Purpose |
+|---------|-------|-----------|---------|
+| `<service-a>` | <stack> | `<dir>/` | <one-line purpose> |
+| `<service-b>` | <stack> | `<dir>/` | <one-line purpose> |
+
+Each service directory has its own `CLAUDE.md` with service-specific build commands and quirks. Cross-service topology: `.claude/memories/ecosystem.md` (auto-loaded).
 ```
 
 ---

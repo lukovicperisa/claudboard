@@ -1,7 +1,11 @@
 # Sibling-repo Inheritance
 
-Used during Phase 2b of the workflow generator. Load this file only when
-`siblings` is non-empty in the detect.sh output.
+**Load gate:** Used during Phase 2b of the workflow generator. Load this file
+only when the post-filter `siblings` array (emitted by detect.sh) is
+non-empty. detect.sh has already dropped siblings whose only inheritable
+values were `[TODO: …]` stubs or exact matches of the documented defaults
+(`customfield_10001`, `customfield_12206`, `Closes`); offering them would be
+vacuous. Phase 2b must NOT load this file when the array is empty.
 
 ---
 

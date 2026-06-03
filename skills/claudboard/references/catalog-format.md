@@ -5,7 +5,7 @@ The convention catalog (`.claudboard/catalog.json`) is the primary artifact on t
 ## Location
 
 ```
-<project-root>/
+<umbrella-root>/
   .claudboard/
     catalog.json          ← primary artifact (this file)
     audits/               ← per-service audit reports (--audit only)
@@ -13,10 +13,42 @@ The convention catalog (`.claudboard/catalog.json`) is the primary artifact on t
   .claude/
     reports/
       claudboard-analysis.md  ← thin human-readable summary (always)
+    memories/
+      ecosystem.md        ← cross-service topology (monorepo + workspace)
     rules/, skills/, ...      ← runtime context (auto-loaded)
 ```
 
+The **umbrella root** is the directory that owns `.claude/` and `.claudboard/`:
+- **Single-project / Monorepo:** `umbrella_root = <repo-root>`
+- **Workspace:** `umbrella_root = <workspace-dir>` (`.claude/` is reachable via the meta-repo symlink set up by `/claudboard-workspace-init`)
+
 `.claudboard/` is **build state**, not runtime context. Claude Code does not auto-load its contents during normal sessions. The catalog exists so that `/generate` (and future `/refresh`) have a reliable, machine-correct input without re-reading N per-service report files.
+
+### Workspace-mode catalog placement
+
+In workspace mode the catalog lands at `<workspace>/.claudboard/catalog.json`. If the workspace has been bootstrapped via `/claudboard-workspace-init`, `.claude/` is a symlink into the meta-repo — writes to `<workspace>/.claudboard/` and `<workspace>/.claude/` land in the versioned meta-repo transparently. If not yet bootstrapped, `/analyse` creates those directories inline and instructs the user to run `/claudboard-workspace-init`.
+
+### Unified default/audit shape
+
+All three modes (single-project, monorepo, workspace) produce the same catalog structure. The `mode` field identifies which case was detected; the structural fields (`stacks`, `conventions`, `patterns`, `proposed_artifacts`, `adaptive_depth`) are populated identically regardless of mode.
+
+- **Default mode:** one reference-service deep pass per detected stack for all modes.
+- **`--audit` mode:** per-service Sonnet sub-agent fan-out for all modes; per-service audits at `.claudboard/audits/<svc>.md`.
+
+### `umbrella_root` field
+
+The optional `umbrella_root` field records the absolute path to the umbrella root. Consumers use it to resolve artifact write paths without branching on `mode`.
+
+When absent (catalogs produced before this field was added), consumers fall back to `repo` (which is equal to `umbrella_root` for single-project and monorepo modes).
+
+### Per-stack reference-repo selection (workspace mode)
+
+In workspace mode, each stack may span multiple independent repos (e.g., five separate Java/Spring services). The orchestrator picks ONE repo per stack as the reference for the default-mode deep pass:
+
+- **Selection rule:** most source files → most complete Dockerfile → or first alphabetically as tiebreaker.
+- **What "reference" means:** only this repo undergoes Phases 1c-1h in default mode. Other repos in the same stack contribute their stack identity and `applicable_paths` but not convention details.
+- **Representative-not-exhaustive:** the catalog's `stacks[].reference_service` records the chosen repo name. Downstream consumers (`/generate`, human reviewers) understand that conventions come from one representative, not all repos in the stack.
+- **`--audit` mode:** reference selection is bypassed — every repo in every stack runs its own deep pass.
 
 ## Required vs Optional Fields
 
@@ -26,6 +58,7 @@ The convention catalog (`.claudboard/catalog.json`) is the primary artifact on t
 | `generated_at` | ✓ | `/analyse` | human review |
 | `from_audit` | ✓ | `/analyse` | `/generate` |
 | `repo` | ✓ | `/analyse` | `/generate` |
+| `umbrella_root` | optional | `/analyse` | `/generate` |
 | `mode` | ✓ | `/analyse` | `/generate` |
 | `stacks` | ✓ | `/analyse` | `/generate` |
 | `conventions` | ✓ | `/analyse` | `/generate` |
@@ -60,14 +93,17 @@ In **`--audit` mode**: every detected service runs Phases 1c-1h via Sonnet sub-a
 
 | `/generate` action | Catalog field used |
 |---|---|
-| Detect single-project / monorepo / workspace | `mode` |
-| Build services table in CLAUDE.md | `stacks[].id`, `stacks[].service_count`, `stacks[].applicable_paths` |
+| UX text ("Generated for your workspace/monorepo at…") | `mode` |
+| Resolve artifact write root | `umbrella_root` (falls back to `repo`) |
+| Build services table in CLAUDE.md | `stacks[].id`, `stacks[].service_count`, `stacks[].repo_count`, `stacks[].applicable_paths` |
 | Write per-stack rule files with `paths:` | `stacks[].applicable_paths`, `proposed_artifacts[type=rule].paths` |
 | Set rule/skill depth | `adaptive_depth[stack-id]` or `proposed_artifacts[].depth_signal` |
 | Source skill exemplar file content | `patterns[id].exemplar_path` |
 | Enumerate artifacts to generate | `proposed_artifacts` (iterate in order) |
 | Fill CLAUDE.md conventions section | `conventions.*` |
 | Schema version validation | `schema_version` (assert `== "1"`) |
+
+**D7 constraint:** Consumers (`/generate`, future `/refresh`) MUST NOT branch on `mode` for generation logic. The `mode` field is for UX text and diagnostic output only. All structural decisions (write paths, rule scoping, skill packaging) are driven by the catalog's structural fields. Two catalogs that differ only in `mode` MUST produce byte-equivalent generated artifacts.
 
 ## Regeneration Contract
 

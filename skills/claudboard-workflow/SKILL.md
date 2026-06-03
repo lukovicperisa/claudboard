@@ -189,6 +189,13 @@ ADO: `https://dev.azure.com/{org}/{project}/_git/{repo}` (modern) or
 
 Read the `siblings` array from the detect.sh output (Phase 1d).
 
+If the post-filter `siblings` array is empty, proceed to Phase 2c without
+narrating the absence — the goal is a silent skip, not a "no siblings"
+status line. detect.sh has already filtered out siblings whose only
+inheritable values were `[TODO: …]` stubs or exact matches of the
+documented defaults; offering them would be vacuous (y and n produce
+identical resolved configs).
+
 If `siblings` is non-empty, load `references/sibling-inheritance.md` for the
 field allowlist and exact inheritance offer wording, then present the offer.
 
@@ -198,6 +205,12 @@ fields.
 
 **Fallback (detect.sh unavailable):** Enumerate `../*/` manually for
 `.claude/skills/feature-workflow/config.json`, then follow sibling-inheritance.md.
+When parsing each sibling's config_summary, drop fields whose value matches
+`^\[TODO: .*\]$` and fields that match the documented default
+(`jira.customFields.sprint = customfield_10001`,
+`jira.customFields.acceptanceCriteria = customfield_12206`,
+`github.linkingKeyword = Closes`). Drop the sibling entirely if no
+inheritable field survives the filter.
 
 ### 2c. Prompt for remaining fields
 

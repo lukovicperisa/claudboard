@@ -32,9 +32,9 @@ Path defaults to the current working directory.
 
 ### 1a. Detect mode and locate input
 
-**Workspace detection:** Check if the current directory is a workspace root (subdirectories with independent `.git/` repos and build files). If so, apply workspace-generation path (1b-workspace below — unchanged from prior version).
+Check for `.claudboard/catalog.json` first. If present, proceed to 1b-catalog. If absent, check for `.claude/reports/claudboard-analysis.md` (legacy migration path, 1c).
 
-**Single-project / monorepo:** Check for `.claudboard/catalog.json` first. If present, proceed to 1b-catalog. If absent, check for `.claude/reports/claudboard-analysis.md` (legacy migration path, 1c).
+All modes (single-project, monorepo, workspace) use the same catalog-driven path. Workspace detection is not special-cased: the catalog's `mode` and `umbrella_root` fields carry all the information needed. Do NOT branch on `mode` for generation logic — use `umbrella_root` (or `repo` if `umbrella_root` absent) as the write root for all artifacts.
 
 ### 1b. Load catalog (primary path)
 
@@ -50,13 +50,9 @@ if catalog.schema_version != "1":
 
 Check `generated_at` — if older than 24 hours, warn: "Catalog is N days old. Consider re-running `/analyse` for fresh results."
 
-Derive mode, stacks, conventions, patterns, proposed artifacts, and adaptive depth from catalog fields. Display a summary of `proposed_artifacts`.
+Derive `umbrella_root` from catalog (`umbrella_root` field if present, else `repo`). All artifact writes use `<umbrella_root>/.claude/` and `<umbrella_root>/CLAUDE.md` as the base.
 
-**Workspace mode** (workspace summary report found):
-- Read the workspace summary report (`<workspace>/.claude/reports/claudboard-analysis-workspace.md`)
-- Read each per-repo report from `<workspace>/.claude/reports/claudboard-analysis-<repo>.md`
-- Validate each: check "Proposed Artifacts" section exists. If missing, warn and skip.
-- Display summary per repo. (Workspace catalog-first path deferred to follow-up change.)
+Derive mode (UX text only), stacks, conventions, patterns, proposed artifacts, and adaptive depth from catalog fields. Display a summary of `proposed_artifacts`.
 
 ### 1c. Legacy migration (no catalog present)
 
@@ -77,7 +73,8 @@ If parsing fails (missing "Proposed Artifacts" section or incompatible format):
 ### 1d. No input found
 
 **If neither catalog nor legacy reports exist:**
-- Tell the user: "No catalog or legacy reports found. Run `/analyse` first to produce `.claudboard/catalog.json`."
+- Single-project / monorepo: "No catalog or legacy reports found. Run `/analyse` first to produce `.claudboard/catalog.json`."
+- Workspace mode (detected by structure): "No catalog or legacy reports found. Run `/analyse` from the workspace root to produce `.claudboard/catalog.json`. If the workspace is not bootstrapped, run `/claudboard-workspace-init` first."
 - Stop here. Do not run analysis inline.
 
 ---
@@ -89,7 +86,12 @@ Show the Proposed Artifacts from `catalog.proposed_artifacts`. Preserve any dedu
 ```
 ## Artifacts to Generate
 
-**CLAUDE.md** — [create/update] — [outline]
+Write root: <umbrella_root>/.claude/  (mode: <catalog.mode>)
+
+**Umbrella CLAUDE.md** — [create/update] — [outline]
+
+**Per-service CLAUDE.md (N files):**
+- `<service-dir>/CLAUDE.md` — ≤30 lines, service-specific, references umbrella ecosystem.md
 
 **Rules (N files):**
 - `<name>.md` (paths: `<catalog.stacks[id].applicable_paths>`) — <depth: catalog.adaptive_depth[stack-id]>
@@ -97,10 +99,14 @@ Show the Proposed Artifacts from `catalog.proposed_artifacts`. Preserve any dedu
 **Skills (M files):**
 - `<skill-name>/` — <SKILL.md + references/ + scripts/>
   exemplar: catalog.patterns[<id>].exemplar_path
+  [Pattern A dispatcher if per-service variations detected]
 
 [If existing .claude/ found:]
 **Already covered (skipping):**
 - `<existing artifact>` — no gaps
+
+**NOT generated (umbrella-only rule):**
+- No writes to <service>/.claude/skills/, <service>/.claude/rules/, or <service>/.claude/memories/
 ```
 
 I'll proceed now — interrupt with Esc to abort or adjust.
@@ -109,41 +115,43 @@ I'll proceed now — interrupt with Esc to abort or adjust.
 
 ## Phase 3: Generate Artifacts
 
-Write files to `.claude/` in the target project. Never write outside `.claude/` (except CLAUDE.md at project root). Never modify existing source files.
+Write files to `<umbrella_root>/.claude/` and `<umbrella_root>/CLAUDE.md`. **Never write to `<umbrella>/<service>/.claude/`** — per-service `.claude/` directories are outside the generation scope under all modes. Never modify existing source files.
 
 Load these references as needed:
 - `../claudboard/references/claude-md-template.md` → for CLAUDE.md structure
 - `../claudboard/references/rule-templates.md` → for rule file templates
-- `../claudboard/references/skill-generation.md` → for full-scope skill generation
+- `../claudboard/references/skill-generation.md` → for full-scope skill generation and Pattern A
 
-### 3a. Generate or update CLAUDE.md
+### 3a. Generate or update umbrella CLAUDE.md
 
 Follow `../claudboard/references/claude-md-template.md` exactly.
 
 **Single-project:** Use the standard template. Target 60-120 lines.
 
-**Monorepo:** Use the monorepo variant template from `claude-md-template.md`. Target 80-150 lines. Include:
-- Services table (name, stack, directory, purpose)
+**Monorepo / Workspace:** Use the monorepo variant template from `claude-md-template.md`. Target 80-150 lines. Include:
+- Services table (name, stack, directory, purpose) — use "Umbrella CLAUDE.md Services Section" from `claude-md-template.md`
 - Shared libraries table (name, directory, consumers)
 - Per-service build/test commands grouped by service
 - Global conventions (branch, commit, CI/CD)
 - Critical Rules section covering cross-service concerns
+- Note: "Cross-service topology: `.claude/memories/ecosystem.md` (auto-loaded)"
 
-**Workspace (multi-repo):** Generate CLAUDE.md per service repo (not at workspace level). For each service:
-- Use standard single-project template as base
-- Add **Ecosystem** section (task 6.8):
-  ```markdown
-  ## Ecosystem
-  
-  This service is part of [project/workspace name if detectable]. Cross-service dependencies and coupling analysis: `.claude/memories/ecosystem.md` (auto-loaded).
-  ```
-- Do not duplicate ecosystem.md content in CLAUDE.md — the memory file is auto-loaded by Claude Code
-
-**If CLAUDE.md exists:** Read it, add only gaps — new commands, new architecture notes, new rules/skills table entries, new critical rules, ecosystem reference (workspace mode). Do not rewrite.
+**If CLAUDE.md exists:** Read it, add only gaps — new commands, new architecture notes, new rules/skills table entries, new critical rules. Do not rewrite.
 
 **If new:** Generate from scratch using detected values for every field.
 
-Write to: `<project>/CLAUDE.md` (project root, not inside `.claude/`)
+Write to: `<umbrella_root>/CLAUDE.md` (repo root for monorepo/single-project; workspace root for workspace)
+
+### 3a-svc. Generate per-service CLAUDE.md (monorepo and workspace only)
+
+For EACH detected service (not library), generate a short per-service `CLAUDE.md` using the "Per-Service CLAUDE.md Template" from `../claudboard/references/claude-md-template.md`.
+
+Rules:
+- ≤30 lines total.
+- References the umbrella `ecosystem.md` and rules — never duplicates their content.
+- Contains only service-specific facts: entry point, build/test commands, deployment target, known quirks.
+- Write to: `<umbrella_root>/<service-dir>/CLAUDE.md`
+- If file exists: read it, add only what's missing. Do not rewrite existing content.
 
 ### 3b. Generate rules
 
@@ -158,11 +166,13 @@ For each rule in `catalog.proposed_artifacts` where `type == "rule"`, follow `..
 
 **Global rules (no `paths:`):** `rules/ci-cd.md`, `rules/gitops.md`, etc. — CI/CD and cross-service conventions.
 
-Write to: `<project>/.claude/rules/<name>.md`. If file exists: add only what's missing; never overwrite.
+Write to: `<umbrella_root>/.claude/rules/<name>.md`. If file exists: add only what's missing; never overwrite.
 
 ### 3c. Generate full-scope skills
 
 For each skill in `catalog.proposed_artifacts` where `type == "skill"`, follow `../claudboard/references/skill-generation.md`.
+
+**Umbrella-only rule:** All generated skills live under `<umbrella_root>/.claude/skills/`. NEVER write into `<umbrella>/<service>/.claude/skills/` under any mode.
 
 **Every generated skill includes:**
 - `SKILL.md` (100-250 lines): architecture diagram specific to this project, step-by-step workflow, code examples from `catalog.patterns[<id>].exemplar_path`
@@ -171,9 +181,24 @@ For each skill in `catalog.proposed_artifacts` where `type == "skill"`, follow `
 
 **Adaptive depth:** from `catalog.adaptive_depth` or `proposed_artifact.depth_signal`. Full for clean codebases, skeleton+ask for inconsistent patterns.
 
-**Monorepo:** scope per-stack skills to `catalog.stacks[id].applicable_paths`; reference only that stack's conventions and exemplars.
+**Monorepo / Workspace — Pattern A dispatcher skills:**
 
-Write to: `<project>/.claude/skills/<name>/`. If skill exists: add only missing components.
+When the catalog's `proposed_artifacts` contains a skill where services/repos in the same stack have meaningfully different procedural content, generate a Pattern A dispatcher skill:
+
+```
+<umbrella_root>/.claude/skills/<concern>/
+├── SKILL.md              # dispatcher — enumerates exact valid service names
+└── references/
+    ├── <service-a>.md    # per-service content
+    ├── <service-b>.md    # per-service content
+    └── ...
+```
+
+Follow the Pattern A contract from `../claudboard/references/skill-generation.md` → "Pattern A". SKILL.md must enumerate the exact set of valid service names (closed-set lookup). Reference filenames must exactly match those names.
+
+**Scope per-stack skills** to `catalog.stacks[id].applicable_paths`; reference only that stack's conventions and exemplars.
+
+Write to: `<umbrella_root>/.claude/skills/<name>/`. If skill exists: add only missing components.
 
 ### 3d. Completion report
 
@@ -237,10 +262,12 @@ If Claude stumbles on any of these, run `/refresh` to update the artifacts.
 
 ## Constraints
 
-- **Never modify source code** — only write to `.claude/` and project-root CLAUDE.md.
+- **Never modify source code** — only write to `<umbrella_root>/.claude/`, `<umbrella_root>/CLAUDE.md`, and `<umbrella_root>/<service>/CLAUDE.md`.
+- **No per-service `.claude/` writes** — NEVER write to `<service>/.claude/skills/`, `<service>/.claude/rules/`, or `<service>/.claude/memories/` under any mode. Per-service content reaches the umbrella via rules with `paths:` globs, `ecosystem.md`, or a Pattern A dispatcher skill.
 - **Merge, don't replace** — when `.claude/` artifacts exist, append or update sections, never delete existing content.
 - **Secrets:** Never include secret values in generated artifacts.
 - **Per-service audit reports** (`.claudboard/audits/*.md`) are NOT consumed by `/generate` even when present — only the catalog is read.
+- **`mode` field is UX-only** — never branch on `mode` for generation logic; use `umbrella_root` for write paths.
 
 ## Reference Files
 
