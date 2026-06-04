@@ -89,36 +89,44 @@ run_java_scan() {
 
   # ── God class candidates ─────────────────────────────────────────────────
   local god_classes_json
-  god_classes_json=$(
-    find "$repo" -name '*.java' -path '*/src/main/*' ! -path '*/test/*' 2>/dev/null \
-    | xargs wc -l 2>/dev/null \
+  god_classes_json='[]'
+  _out=''
+  if _out=$(
+    _q find "$repo" -name '*.java' -path '*/src/main/*' ! -path '*/test/*' \
+    | _q xargs wc -l \
     | grep -v ' total$' \
     | awk '{print $1, $2}' \
     | sort -rn \
     | awk -v repo="$repo" '$1 > 300 {print "{\"file\":\"" $2 "\",\"loc\":" $1 "}"}' \
     | sed "s|\"$repo/|\"| " \
     | head -10 \
-    | jq -sc . 2>/dev/null || echo '[]'
-  )
+    | _q jq -sc .
+  ); then
+    god_classes_json="$_out"
+  fi
 
   # ── Inheritance map ──────────────────────────────────────────────────────
   local inheritance_map_json
-  inheritance_map_json=$(
-    grep -rh '^[[:space:]]*public abstract class\|^[[:space:]]*abstract class' \
-      --include='*.java' "${repo}/src" 2>/dev/null \
+  inheritance_map_json='[]'
+  _out=''
+  if _out=$(
+    _q grep -rh '^[[:space:]]*public abstract class\|^[[:space:]]*abstract class' \
+      --include='*.java' "${repo}/src" \
     | grep -oE '[A-Za-z][A-Za-z0-9_]*(<[^>]*>)?' \
     | grep -v 'abstract\|class\|public\|protected\|final' \
     | sort -u \
     | head -20 \
     | while read -r base; do
-        count=$(grep -rl "extends $base" --include='*.java' "${repo}/src" 2>/dev/null | wc -l | tr -d ' ')
-        sample=$(grep -rl "extends $base" --include='*.java' "${repo}/src" 2>/dev/null | head -1 | sed "s|$repo/||")
+        count=$(_q grep -rl "extends $base" --include='*.java' "${repo}/src" | wc -l | tr -d ' ')
+        sample=$(_q grep -rl "extends $base" --include='*.java' "${repo}/src" | head -1 | sed "s|$repo/||")
         if [ "${count:-0}" -ge 2 ] 2>/dev/null; then
           printf '{"base":"%s","subclasses":%s,"sample_file":"%s"}\n' "$base" "$count" "$sample"
         fi
       done \
-    | jq -sc . 2>/dev/null || echo '[]'
-  )
+    | _q jq -sc .
+  ); then
+    inheritance_map_json="$_out"
+  fi
 
   # ── Output JSON ──────────────────────────────────────────────────────────
   jq -n \
