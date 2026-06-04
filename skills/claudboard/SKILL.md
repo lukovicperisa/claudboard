@@ -36,6 +36,22 @@ workspace    → run at the workspace directory
 
 If you run from the wrong level, re-run from the right one. The catalog regenerates in seconds.
 
+## Hinting tracker/repo backend for /claudboard-workflow
+
+When both a Jira MCP and a Bosch T&R MCP (or both ADO and GitHub MCPs) are
+configured, `/claudboard-workflow` will normally prompt once to ask which
+backend to target. Include a hint in your invocation text to skip that prompt:
+
+| Intent | Include in invocation | Example |
+|---|---|---|
+| Target Atlassian Jira | `jira` or `atlassian` | `/claudboard-workflow use jira` |
+| Target Bosch T&R | `tr`, `t&r`, `track`, or `bosch` | `/claudboard-workflow for bosch tr` |
+| Target Azure DevOps | `ado`, `azure`, or `devops` | `/claudboard-workflow ado project` |
+| Target GitHub | `github` or `gh` | `/claudboard-workflow github repo` |
+
+Hints are matched as whole words (case-insensitive). An invocation with no hint
+produces at most one prompt; an invocation with a valid hint produces zero.
+
 ## Phase 0: First-run permission setup
 
 **Before dispatching to any sub-skill**, check whether the recommended permissions are already installed:

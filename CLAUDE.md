@@ -79,7 +79,7 @@ skills/
 ## Key Design Decisions
 
 - **Two-step workflow**: `/analyse` (read-only, saves report) → `/generate` (writes artifacts, best in fresh session)
-- **Non-interactive by default**: `/analyse` runs end-to-end with no mid-flow prompts. Wrong-level invocations recover by re-running from the correct directory — the catalog regenerates in seconds.
+- **Non-interactive by default**: `/analyse` runs end-to-end with no mid-flow prompts. Wrong-level invocations recover by re-running from the correct directory — the catalog regenerates in seconds. `/claudboard-workflow` follows the same principle: happy path = zero prompts; conflicting MCPs without an invocation hint = one prompt (the tracker/repo conflict).
 - **Adaptive rule depth**: Full rules for clean codebases, skeleton for messy, ask user when in doubt
 - **Merge, not replace**: When `.claude/` exists, fill gaps only — never overwrite
 - **Full-scope skills**: Every generated skill has SKILL.md + references/ + scripts/ — no stubs

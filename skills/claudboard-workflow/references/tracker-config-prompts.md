@@ -1,8 +1,18 @@
 # Tracker Config Prompts — claudboard-workflow
 
-Exact prompt text, default values, inheritance offer wording, and stub-escape
-text for every `config.json` tracker field that requires user input. Use this
-reference during Phase 2 (Config Gathering) of the orchestrator.
+> **Documentation only — no longer loaded at runtime.**
+> Since the `claudboard-workflow-non-interactive` change (2026-06-04), the
+> orchestrator silently stubs missing fields with `[TODO: …]` instead of
+> prompting. This file remains as a reference for users editing `config.json`
+> by hand.
+>
+> After a `/claudboard-workflow` run, the completion report's **"Unfilled config
+> values"** section is the canonical channel for discovering which fields need
+> to be filled.
+
+Field documentation, default values, inheritance offer wording, and stub-escape
+text for every `config.json` tracker field. Use this file as a reference when
+editing `config.json` by hand after generation.
 
 ---
 

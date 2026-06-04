@@ -124,7 +124,38 @@ Read the resolved boolean flags: `mcp.tracker_jira`, `mcp.tracker_tr`,
 `mcp.repo_ado`, `mcp.repo_github`. Surface any `mcp.warnings` entries to the
 user before proceeding.
 
-**If `mcp.ambiguities` is non-empty**, resolve each conflicting dimension:
+**Invocation-hint pre-resolution**
+
+Before the conflict prompt fires, scan the full user message that triggered this
+skill (including all tokens after `/claudboard-workflow`) for backend hints using
+case-insensitive whole-word matching against these token tables:
+
+| Dimension | Resolves to    | Hint tokens (whole word, case-insensitive)      |
+|-----------|----------------|--------------------------------------------------|
+| tracker   | `tracker_jira` | `jira`, `atlassian`                             |
+| tracker   | `tracker_tr`   | `tr`, `t&r`, `track`, `bosch`                  |
+| repo      | `repo_ado`     | `ado`, `azure`, `devops`                        |
+| repo      | `repo_github`  | `github`, `gh`                                  |
+
+**Whole-word semantics:** match on whitespace, punctuation, or string start/end
+boundaries. `github-actions-test` must NOT match `github`; `for the Github repo`
+must match.
+
+For each dimension where **exactly one** set of tokens matched:
+- Set the chosen flag `true`, the other `false`.
+- Record `"chosen via invocation hint"` in `sources`.
+- **Remove** the corresponding entry from `mcp.ambiguities` so the conflict
+  prompt below does not fire for that dimension.
+
+For each dimension where **both** sets of tokens matched (e.g. "compare jira vs tr"):
+- Suppress the pre-resolution for that dimension — let the conflict prompt fire.
+
+For each dimension where a hint was present but no MCP is configured for the
+hinted backend:
+- Silently ignore the hint.
+
+**If `mcp.ambiguities` is non-empty** (after hint pre-resolution), resolve each
+remaining conflicting dimension:
 
 _Tracker dimension conflict:_
 ```
@@ -167,7 +198,9 @@ precedence. Run ambiguity prompts and conflict guard as above.
 ## Phase 2: Config Gathering
 
 Gather values for `config.json` and substitution variables. Work through each
-source in order — auto-detect first, inherit from siblings second, prompt last.
+source in order — auto-detect first (Phase 2a), silent auto-fill second (Phase
+2a-bis), sibling inheritance third (Phase 2b). No interactive prompts are
+issued for individual config fields.
 
 ### 2a. Auto-detect from git remote
 
@@ -178,18 +211,78 @@ Read the `git_remote` block from the detect.sh output (Phase 1d):
 - When GitHub: `github.owner`, `github.repo` → set directly; record `github.linkingKeyword = "Closes"` as default
 
 Inform the user of what was auto-detected before moving on. Unrecognised or
-missing remote URLs leave the affected fields for Phase 2c prompting.
+missing remote URLs are handled by Phase 2a-bis silent auto-fill.
 
 **Fallback (detect.sh unavailable):** Run `git remote -v` and parse manually.
 ADO: `https://dev.azure.com/{org}/{project}/_git/{repo}` (modern) or
 `https://{org}.visualstudio.com/{project}/_git/{repo}` (legacy). GitHub:
 `git@github.com:{owner}/{repo}[.git]` or `https://github.com/{owner}/{repo}[.git]`.
 
+### 2a-bis. Silent auto-fill
+
+With the git remote resolved in Phase 2a, silently fill all remaining
+`config.json` fields without prompting the user. Work through the steps in order.
+
+**Step 1 — Atlassian MCP call (only when `mcp.tracker_jira == true`)**
+
+Call `mcp__atlassian__getAccessibleAtlassianResources` exactly once.
+
+- On success: take the **first** result in the response array and populate:
+  - `jira.cloudId` ← `id` field
+  - `jira.urlBase` ← `url` field (strip trailing slash)
+- On failure (network error, OAuth not completed, empty array, any exception):
+  stub both fields silently:
+  - `jira.cloudId = "[TODO: JIRA_CLOUD_ID]"`
+  - `jira.urlBase = "[TODO: JIRA_URL_BASE]"`
+
+**Step 2 — `jira.projectKey` heuristic (only when `mcp.tracker_jira == true`)**
+
+Compute `candidate = basename($PROJECT_PATH).toUpperCase()`.
+
+- If `candidate` matches `^[A-Z]+$`: set `jira.projectKey = candidate`.
+- Otherwise (contains digits, hyphens, or mixed case that doesn't uppercase cleanly):
+  set `jira.projectKey = "[TODO: JIRA_PROJECT_KEY]"` silently.
+- **Workspace mode:** always set `jira.projectKey = "[TODO: JIRA_PROJECT_KEY]"` —
+  the workspace meta-repo has no single per-repo identifier.
+
+**Step 3 — Documented defaults (applied for active backends only)**
+
+Write the following values silently, skipping fields whose backend flag is `false`:
+
+| `config.json` field | Value | Active when |
+|---|---|---|
+| `jira.customFields.sprint` | `"customfield_10001"` | `tracker_jira` |
+| `jira.customFields.acceptanceCriteria` | `"customfield_12206"` | `tracker_jira` |
+| `jira.transitions.start` | `"In Progress"` | `tracker_jira` |
+| `jira.transitions.success` | `"In Review"` | `tracker_jira` |
+| `jira.transitions.failure` | `"Blocked"` | `tracker_jira` |
+| `jira.labels.area.backend` | `"BE"` | `tracker_jira` |
+| `jira.labels.area.frontend` | `"FE"` | `tracker_jira` |
+| `jira.labels.area.devops` | `"DevOps"` | `tracker_jira` |
+| `jira.labels.area.docs` | `"Docs"` | `tracker_jira` |
+| `azureDevOps.repositoryId` | `"[TODO: ADO_REPO_ID]"` | `repo_ado` |
+| `github.linkingKeyword` | `"Closes"` | `repo_github` |
+| `git.branchTypes` | `["feature","bugfix","hotfix"]` | always |
+| `git.branchPattern` | `"{type}/{ticket}/{slug}"` if any tracker active, else `"{type}/{slug}"` | always |
+| `git.ticketRegex` | `"[A-Z]+-[0-9]+"` | always |
+
+**Step 4 — Summary line**
+
+After all fields are written, print exactly one line:
+
+```
+Auto-filled N fields (M stubbed for manual editing)
+```
+
+Where N = total fields written, M = fields whose value is `[TODO: …]`. Do not
+list each field inline — the completion report's "Unfilled config values" section
+covers the stub list.
+
 ### 2b. Sibling-repo inheritance
 
 Read the `siblings` array from the detect.sh output (Phase 1d).
 
-If the post-filter `siblings` array is empty, proceed to Phase 2c without
+If the post-filter `siblings` array is empty, proceed to Phase 3 without
 narrating the absence — the goal is a silent skip, not a "no siblings"
 status line. detect.sh has already filtered out siblings whose only
 inheritable values were `[TODO: …]` stubs or exact matches of the
@@ -200,8 +293,7 @@ If `siblings` is non-empty, load `references/sibling-inheritance.md` for the
 field allowlist and exact inheritance offer wording, then present the offer.
 
 After the user accepts, mark all inheritable fields from the chosen sibling's
-`config_summary` as resolved. Proceed to Phase 2c for any remaining unresolved
-fields.
+`config_summary` as resolved.
 
 **Fallback (detect.sh unavailable):** Enumerate `../*/` manually for
 `.claude/skills/feature-workflow/config.json`, then follow sibling-inheritance.md.
@@ -211,31 +303,6 @@ When parsing each sibling's config_summary, drop fields whose value matches
 `jira.customFields.acceptanceCriteria = customfield_12206`,
 `github.linkingKeyword = Closes`). Drop the sibling entirely if no
 inheritable field survives the filter.
-
-### 2c. Prompt for remaining fields
-
-**Reference load gates** (load before prompting the relevant fields):
-
-- Load `references/tracker-config-prompts.md` only when
-  `(mcp.tracker_jira OR mcp.tracker_tr)` AND `unresolved.tracker` is non-empty.
-- Load `references/repo-config-prompts.md` only when
-  `(mcp.repo_ado OR mcp.repo_github)` AND `unresolved.repo` is non-empty.
-
-For each `config.json` field not resolved by auto-detect or inheritance, prompt
-the user using the exact text and defaults from the loaded reference file.
-Every prompt must offer a "stub with TODO" escape:
-
-> Type 's' to stub with [TODO: FIELD_NAME] and continue.
-
-Skip all fields for a backend when its flag is false.
-
-**Shared git fields (always prompted):**
-
-| Field | Default |
-|-------|---------|
-| `git.branchTypes` | `["feature","bugfix","hotfix"]` |
-| `git.branchPattern` | `{type}/{ticket}/{slug}` if either tracker active, else `{type}/{slug}` |
-| `git.ticketRegex` | `[A-Z]+-[0-9]+` |
 
 ---
 
@@ -490,10 +557,24 @@ bosch-jira-mcp (6 tools) has no create/worklog/sprint-write. Use existing
 ticket key; sprint and AC write into description body; labels via
 read-modify-write. Each limitation lifts when the missing tool lands in the MCP.
 
-### Config stubs (fields left as TODO — fill before first use):
+## Unfilled config values
 
-[list any [TODO: ...] placeholders written to config.json with hints for where
-to find the correct values]
+[Include this section ONLY when one or more `[TODO: …]` stubs were written to
+`config.json`. Omit the entire section when all fields were resolved — silence
+signals success.]
+
+The following config.json fields were stubbed because they could not be
+auto-detected. Edit them before running /start-feature:
+
+```
+  - <json_path>   [TODO: FIELD_KEY]
+    Path: <absolute path to $SKILL_TARGET/config.json>
+```
+
+List every stub on its own line with the exact JSON path (e.g.
+`jira.projectKey`, `azureDevOps.repositoryId`) and the `[TODO: …]` value
+written. Include the full filesystem path to `config.json` on the next
+indented line for copy-paste navigation.
 
 Clarification autonomy default set to `{{CLARIFY_AUTONOMY_DEFAULT}}` (override per-invocation or edit `clarify.defaultAutonomy` in `config.json`).
 
@@ -557,7 +638,7 @@ tokens on content the model won't use.
 |-----------|-----------|
 | `references/block-catalog.md` | Start of Phase 3 (render time) only |
 | `references/substitution-catalog.md` | Start of Phase 4 (render time) only |
-| `references/tracker-config-prompts.md` | `(tracker_jira OR tracker_tr)` AND `unresolved.tracker` non-empty |
-| `references/repo-config-prompts.md` | `(repo_ado OR repo_github)` AND `unresolved.repo` non-empty |
+| `references/tracker-config-prompts.md` | documentation only — never loaded at runtime |
+| `references/repo-config-prompts.md` | documentation only — never loaded at runtime |
 | `references/sibling-inheritance.md` | `siblings` array non-empty (load before Phase 2b offer) |
 | `references/feature-workflow.template/*` | Phase 6 render — load individual templates on demand |

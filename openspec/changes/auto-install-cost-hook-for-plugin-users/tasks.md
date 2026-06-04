@@ -49,3 +49,37 @@
 - [ ] 7.3 Run `/claudboard:claudboard-generate` in the same session immediately after; observe a second distinct cost line, slice starts at the `/generate` prompt timestamp (not accumulating with the first)
 - [ ] 7.4 In a separate session, confirm a non-claudboard task (e.g., `/openspec-explore`) produces no cost line
 - [ ] 7.5 If 7.2-7.4 all pass: commit and tag for publish. If any fail: capture `claude --debug` output and iterate on the regex or the `hooks.json` schema
+
+> **2026-06-04 verification result:** Tasks 7.2–7.4 were attempted on craftsphere.cloud at `4.0.0-beta.9`. All three failed — no cost line appeared for `/analyse`, `/generate`, or `/workflow`. Root cause traced to the stdin-contract gap (section 8) and the missing `workflow` verb (section 9). Re-run 7.2–7.4 after sections 8–10 land.
+
+## 8. stdin contract fix (bug 3, primary)
+
+- [ ] 8.1 At the top of `stop-hook.sh`, before any JSONL-path resolution, capture stdin: `HOOK_INPUT=$(cat 2>/dev/null || true)`. Stdin may be empty in non-hook invocations (manual testing, SDK with env vars) — empty stdin must not error.
+- [ ] 8.2 Attempt to parse `.transcript_path` from `HOOK_INPUT` via `jq -r '.transcript_path // empty'` (route stderr to `/dev/null`; treat `null`/empty as "not present"). If parsing yields a non-empty value, use that as `JSONL_PATH`.
+- [ ] 8.3 Preserve the existing precedence chain as fallbacks **after** the stdin path: (i) `$CLAUDE_SESSION_JSONL`, (ii) `$CLAUDE_CODE_SESSION_ID` → constructed path. The stdin source MUST win when present; the env-var sources MUST keep working for SDK and manual invocation.
+- [ ] 8.4 Confirm by re-running the existing `single-task-opus.jsonl` fixture via the env-var path that output is unchanged (backward compat).
+- [ ] 8.5 Confirm by piping `{"transcript_path":"<path-to-fixture>","hook_event_name":"Stop"}` to the script with `env -u CLAUDE_SESSION_JSONL -u CLAUDE_CODE_SESSION_ID` that output is non-empty and identical to the env-var-path output for the same fixture.
+
+## 9. `workflow` verb added to trigger regex
+
+- [ ] 9.1 In `stop-hook.sh`, extend the trigger-detection regex alternation from `(?:analyse|generate|refresh|techdebt)` to `(?:analyse|generate|refresh|techdebt|workflow)` at **both** call sites (the `test()` filter and the `capture()` named group).
+- [ ] 9.2 Confirm `$TRIGGER_CMD` after the jq pipeline yields `workflow` (not `claudboard-workflow` or any prefix variant) for a `/claudboard:claudboard-workflow` user turn.
+- [ ] 9.3 Confirm `compute-cost.sh --task workflow` does not error and emits a cost line tagged with the `workflow` task name. If the script's `--task` arg is a free-form passthrough this is automatic; if it validates against a fixed verb list, add `workflow` to that list.
+- [ ] 9.4 Re-run `single-task-opus.jsonl` and `namespaced-trigger.jsonl` after the regex change to confirm no regression for the four pre-existing verbs.
+
+## 10. stdin-mode test fixture + workflow fixture
+
+- [ ] 10.1 Create `skills/claudboard/scripts/tests/namespaced-workflow.jsonl` modelled on `namespaced-trigger.jsonl` but with the user turn containing `<command-name>/claudboard:claudboard-workflow</command-name>`. Include enough assistant turns with `usage` fields that `compute-cost.sh` produces a non-empty cost line.
+- [ ] 10.2 In `tests/run.sh` (or `tests/hook-run.sh` — whichever is the active runner), add **stdin-mode** assertion blocks: for each of `single-task-opus.jsonl`, `namespaced-trigger.jsonl`, and `namespaced-workflow.jsonl`, invoke the hook with `env -u CLAUDE_SESSION_JSONL -u CLAUDE_CODE_SESSION_ID bash stop-hook.sh` and stdin set to `{"transcript_path":"<abs-path-to-fixture>","hook_event_name":"Stop"}`. Assert a non-empty cost line on stdout in each case.
+- [ ] 10.3 Keep the existing env-var-mode assertions for the same three fixtures; both modes must pass.
+- [ ] 10.4 Add a workflow-verb-specific assertion that the cost line tag is `workflow` (or whatever the canonical task label is for workflow) — mirrors the `analyse` tag check in section 5.
+- [ ] 10.5 Run the full test suite; capture pass/fail counts; all should pass.
+
+## 11. Re-verify end-to-end after sections 8–10
+
+- [ ] 11.1 Bump `.claude-plugin/plugin.json` to the next beta (after `4.0.0-beta.10`).
+- [ ] 11.2 Re-run task 7.2 against craftsphere.cloud (or any plugin-installed workspace) — observe one cost line for `/claudboard:claudboard-analyse`.
+- [ ] 11.3 Re-run task 7.3 — observe a second distinct cost line for `/claudboard:claudboard-generate`.
+- [ ] 11.4 Run `/claudboard:claudboard-workflow` and observe one cost line tagged `workflow`.
+- [ ] 11.5 Confirm via `ls ~/.claude/projects/<cwd-slug>/.claudboard-cost-emitted/` that the per-task marker file is now being written (proves the script ran to completion, not just that it printed).
+- [ ] 11.6 If `claude --debug` is needed to diagnose any remaining miss, capture the output and attach to this change before publish.
