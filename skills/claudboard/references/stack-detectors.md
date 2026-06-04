@@ -201,60 +201,7 @@ Read these in parallel. Each file is a detection signal — the more that match,
 
 ---
 
-## Right-Level Check
-
-**Run this check FIRST**, before monorepo detection or any other scanning. Prevents analysing a microservice in isolation when it's part of a larger ecosystem.
-
-### Detection Algorithm
-
-Scan the parent directory (`../`) for sibling directories containing any build file:
-- `build.gradle`, `build.gradle.kts`
-- `pom.xml`
-- `package.json`
-- `go.mod`
-- `pyproject.toml`
-- `Cargo.toml`
-- `*.csproj`
-
-**If N ≥ 2 sibling service directories found:**
-
-1. Detect the stack for each sibling (same stack detection signals as below)
-2. Present step-up prompt to user:
-   ```
-   This looks like a microservice within a larger system.
-   
-   Found sibling services at [parent-dir]:
-   • user-service (Java/Spring Boot)
-   • frontend (React/TypeScript)
-   • notification-service (Java/Spring Boot)
-   
-   Analyse at ecosystem level for cross-service dependency mapping? [y/n]
-   ```
-
-3. Wait for user response:
-   - **YES** → re-run analysis from the parent directory (workspace or monorepo detection will trigger)
-   - **NO** → proceed with analysis at current directory without further checks
-
-**Skip this check if:**
-- CWD has no build file (already at workspace/monorepo root — will trigger later detection)
-- Parent directory has fewer than 2 other build-file directories (this is a monolith or standalone service)
-
-**Stack detection for sibling display:**
-
-Use build file presence to infer stack:
-- `build.gradle`/`pom.xml` → "Java" (check dependencies for "/Spring Boot" suffix if present)
-- `package.json` → "Node.js" (check for `react`/`next`/`vue`/`@angular/core` in dependencies → "React", "Next.js", "Vue", "Angular")
-- `go.mod` → "Go"
-- `pyproject.toml`/`requirements.txt` → "Python"
-- `Cargo.toml` → "Rust"
-- `*.csproj` → ".NET"
-- Unknown → "(unknown stack)"
-
----
-
 ## Monorepo Detection & Service Classification
-
-Run this check after the Right-Level Check passes (user declined step-up or no siblings found).
 
 ### Step 1: Find independent build roots
 

@@ -24,6 +24,44 @@ description: >
 
 Analyzes a repository and generates Claude Code artifacts that let you work on it immediately: CLAUDE.md, rules, and full-scope skills tailored to the project's actual patterns.
 
+## Where to run /analyse
+
+```
+single repo  → run inside the repo
+monorepo     → run at the repo root
+workspace    → run at the workspace directory
+               (the parent folder that holds ONLY the related repos
+               — not a generic ~/Projects or ~/code folder)
+```
+
+If you run from the wrong level, re-run from the right one. The catalog regenerates in seconds.
+
+## Phase 0: First-run permission setup
+
+**Before dispatching to any sub-skill**, check whether the recommended permissions are already installed:
+
+1. Read `.claude/settings.json` (if it exists).
+2. Look for the key `_claudboard_permissions_version` in the JSON:
+   - **Present (any value):** Skip the prompt — permissions were already handled. Proceed to sub-skill dispatch.
+   - **Absent:** Show the one-shot offer below, then proceed.
+
+**One-shot offer (shown only when marker is absent):**
+
+> Add claudboard's recommended permissions to `.claude/settings.json`? This eliminates ~20 prompts per analysis run. [y/n]
+
+**YES branch:**
+1. Read `references/recommended-permissions.json` to get the `permissions.allow` array.
+2. Read `.claude/settings.json` (or start with `{}` if missing).
+3. Merge: take the existing `permissions.allow` array (if any) and union it with the bundle's array — deduplicate, preserve all existing entries, never delete anything.
+4. Write back `.claude/settings.json` with the merged `permissions.allow` and the marker `"_claudboard_permissions_version": "1"`.
+5. Print: `✓ Recommended permissions added to .claude/settings.json`
+6. MUST NOT modify any key other than `permissions.allow` and `_claudboard_permissions_version`.
+
+**NO branch:**
+1. Write `"_claudboard_permissions_version": "1-declined"` into `.claude/settings.json` (stamp only — do not touch any other key).
+2. Print the bundle contents as a copy-paste fallback:
+   > To add these manually later, copy the `permissions.allow` entries from `skills/claudboard/references/recommended-permissions.json` into `.claude/settings.json`. To re-trigger this offer, delete the `_claudboard_permissions_version` key and re-run any claudboard command.
+
 ## Workflow
 
 Onboarding is a two-phase process. Run each phase separately for best results.

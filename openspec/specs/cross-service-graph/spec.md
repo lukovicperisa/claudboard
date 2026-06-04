@@ -85,12 +85,16 @@ Each dependency edge SHALL be classified by coupling strength.
 - **WHEN** A →(REST/TIGHT)→ B →(REST/TIGHT)→ C
 - **THEN** the graph SHALL flag: "Synchronous chain A→B→C — latency amplifies and failure cascades"
 
-### Requirement: Present graph before injection
-The system SHALL present the full dependency graph to the user before writing any ecosystem files, to allow correction of mismatches.
+### Requirement: Print graph before injection
+The system SHALL print the full dependency graph before writing any ecosystem files, then proceed immediately without blocking.
 
-#### Scenario: Graph presented for review
+#### Scenario: Graph printed and pipeline proceeds
 - **WHEN** graph construction is complete
-- **THEN** the system SHALL display the dependency graph with edges, coupling classifications, and any warnings, then ask: "Proceed with ecosystem injection? [y/n/edit]"
+- **THEN** the system SHALL print the dependency graph with edges, coupling classifications, and any warnings, then immediately proceed to write `ecosystem.md` without waiting for user input
+
+#### Scenario: Recovery path printed
+- **WHEN** the graph has been printed
+- **THEN** the printed output SHALL include: "If an edge is missing or wrong, edit `.claudboard/catalog.json` or `.claude/memories/ecosystem.md` after the run completes."
 
 ---
 

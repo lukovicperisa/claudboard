@@ -57,32 +57,7 @@ Haiku is intentionally not used in v1.
 
 Load `../claudboard/references/stack-detectors.md` first — it lists which files to check and what to extract per language. For Wide Scan patterns, load the language-specific file: `stack-detectors-java.md`, `stack-detectors-typescript.md`, `stack-detectors-python.md`, `stack-detectors-go.md`, `stack-detectors-rust.md`, or `stack-detectors-dotnet.md`.
 
-### 1a. Right-level check, workspace/monorepo detection, & service classification
-
-**Step 0: Right-level check** — run FIRST, before any other detection.
-
-Follow `../claudboard/references/stack-detectors.md` → "Right-Level Check":
-
-1. Check if CWD has a build file AND parent directory (`../`) contains N≥2 sibling directories with build files
-2. If siblings found:
-   - Detect stack for each sibling (use build file signals from stack-detectors.md)
-   - Present step-up prompt with sibling list and detected stacks:
-     ```
-     This looks like a microservice within a larger system.
-     
-     Found sibling services at [parent-dir]:
-     • user-service (Java/Spring Boot)
-     • frontend (React/TypeScript)
-     
-     Analyse at ecosystem level for cross-service dependency mapping? [y/n]
-     ```
-   - Wait for user response:
-     - **YES** → re-run analysis from parent directory (proceed to Step 1 from there)
-     - **NO** → proceed with analysis at CWD, skip to Step 1
-
-3. **Skip right-level check if:**
-   - CWD has no build file (already at workspace/monorepo root)
-   - Parent has <2 other build-file directories
+### 1a. Workspace/monorepo detection & service classification
 
 **Step 1: Monorepo or workspace detection**
 
@@ -123,7 +98,7 @@ For each build root (monorepo services or workspace repos):
 
 **Step 3: Topology presentation**
 
-Present detected topology to user and wait for confirmation:
+Print the detected topology and proceed immediately:
 
 ```
 Found N repos: [services list] + [libraries list]. Running full analysis of each service.
@@ -139,7 +114,7 @@ Libraries:
 Proceeding with full analysis of each service.
 ```
 
-Wait for user to confirm or correct misclassifications before proceeding.
+If a service is misclassified, edit `.claudboard/catalog.json` after the run completes, or re-run `/analyse` from a different level.
 
 **Flow Summary:**
 
@@ -402,9 +377,11 @@ For each service A, for each outbound reference in A, for each service B (B ≠ 
 - **Synchronous chain:** A→B→C where all edges are REST/TIGHT → flag latency/cascade risk
 - **Circular dependency:** A→B→A (any protocol) → flag as architectural risk
 
-**Step 4: Present graph for review**
+**Step 4: Print graph**
 
-Display edges, coupling classifications, and warnings. Wait for user confirmation (or corrections). If user edits, re-present adjusted graph.
+Print edges, coupling classifications, and warnings. Proceed immediately to write `ecosystem.md`.
+
+If an edge is missing or wrong, edit `.claudboard/catalog.json` or `.claude/memories/ecosystem.md` after the run completes.
 
 **Step 5: Write umbrella ecosystem.md**
 
@@ -512,10 +489,17 @@ Key format rules (do NOT deviate):
 
 Present all sections to the user.
 
-If patterns are ambiguous or inconsistent, ask the user now — e.g.:
-- "Found both field injection and constructor injection — which should be the standard?"
-- "Naming conventions vary between modules — document the predominant pattern or leave as TODO?"
-- "Skills X and Y overlap — merge into one or keep separate?"
+Ask the user ONLY when a convention is split at 40–60% per variant AND the dimension is one of: DI style, error-handling strategy, logging framework, test framework. Routine per-module variation MUST be recorded as "predominant: X, also seen: Y, Z" in the catalog without a prompt.
+
+Examples that DO trigger a prompt:
+- "Found field injection in 48% of classes and constructor injection in 52% — which should be the standard for new code?"
+- "Two test frameworks each cover roughly half the codebase (JUnit 5 vs Spock) — pick one to document as default?"
+
+Examples that do NOT trigger a prompt (record as predominant pattern instead):
+- Naming variations across modules (e.g., `XxxController` in some services, `XxxResource` in others)
+- Formatting choices (brace style, line length)
+- Library versions (Spring Boot 3.1 in one service, 3.2 in another)
+- One service uses a different logging format than the rest (record the majority pattern)
 
 ---
 

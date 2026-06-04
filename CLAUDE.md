@@ -26,7 +26,8 @@ skills/
 │       │   └── architectural.md      # Saga, CQRS, outbox, BFF, circuit breaker, schema registry, etc.
 │       ├── claude-md-template.md     # CLAUDE.md generation template
 │       ├── rule-templates.md         # Rule file templates per language
-│       └── skill-generation.md       # Full-scope skill generation guide
+│       ├── skill-generation.md       # Full-scope skill generation guide
+│       └── recommended-permissions.json  # v1 permission bundle + auto-merge marker
 ├── claudboard-analyse/
 │   ├── SKILL.md                      # Discovery & analysis (read-only, saves report)
 │   └── scripts/
@@ -78,10 +79,17 @@ skills/
 ## Key Design Decisions
 
 - **Two-step workflow**: `/analyse` (read-only, saves report) → `/generate` (writes artifacts, best in fresh session)
+- **Non-interactive by default**: `/analyse` runs end-to-end with no mid-flow prompts. Wrong-level invocations recover by re-running from the correct directory — the catalog regenerates in seconds.
 - **Adaptive rule depth**: Full rules for clean codebases, skeleton for messy, ask user when in doubt
 - **Merge, not replace**: When `.claude/` exists, fill gaps only — never overwrite
 - **Full-scope skills**: Every generated skill has SKILL.md + references/ + scripts/ — no stubs
 - **Gold standard**: craftsphere.cloud/.claude/ — that's what the output should look like
+
+## Permissions
+
+The dispatcher (`skills/claudboard/SKILL.md`) ships a curated permission bundle at `skills/claudboard/references/recommended-permissions.json`. On first invocation, if `.claude/settings.json` does not contain the `_claudboard_permissions_version` marker, the dispatcher offers a single auto-merge prompt. Accepting adds all claudboard Bash/Read/Write patterns to `permissions.allow` and stamps the marker, eliminating ~20 permission prompts per analysis run.
+
+If declined, the marker is stamped as `"1-declined"` — no re-asking on subsequent runs. To re-trigger the offer (e.g. after the bundle is updated in a new version), delete the `_claudboard_permissions_version` key from `.claude/settings.json` and re-run any claudboard command. Future bundle versions use a higher version marker (e.g. `"2"`) so a v1 decline does not silence a v2 offer.
 
 ## Generated feature-workflow
 

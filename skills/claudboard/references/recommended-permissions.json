@@ -1,0 +1,24 @@
+{
+  "_claudboard_permissions_version": "1",
+  "permissions": {
+    "allow": [
+      "Bash(find . -maxdepth *:*)",
+      "Bash(bash scripts/discover.sh:*)",
+      "Bash(jq:*)",
+      "Bash(mkdir -p .claudboard:*)",
+      "Bash(mkdir -p .claude:*)",
+      "Bash(git log:*)",
+      "Bash(git branch:*)",
+      "Bash(git status:*)",
+      "Bash(grep:*)",
+      "Bash(rg:*)",
+      "Read(./**)",
+      "Write(./.claudboard/**)",
+      "Write(./.claude/reports/**)",
+      "Write(./.claude/memories/**)",
+      "Write(./.claude/rules/**)",
+      "Write(./.claude/skills/**)",
+      "Write(./CLAUDE.md)"
+    ]
+  }
+}
