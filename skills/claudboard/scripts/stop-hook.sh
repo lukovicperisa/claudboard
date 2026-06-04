@@ -3,9 +3,9 @@
 # stop-hook.sh — Claude Code Stop hook for claudboard per-task cost reporting
 #
 # Fires on every Stop event. Scans the session JSONL for the most recent
-# /analyse, /generate, /refresh, or /techdebt user trigger; if found, calls
-# compute-cost.sh and emits one cost line to stdout. Exits silently (no output)
-# when no claudboard trigger is in the session.
+# /analyse, /generate, /refresh, /techdebt, or /workflow user trigger; if found,
+# calls compute-cost.sh and emits one cost line to stdout. Exits silently (no
+# output) when no claudboard trigger is in the session.
 #
 # No model API calls are made — this script runs at $0 API token cost.
 #
@@ -15,8 +15,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPUTE="$SCRIPT_DIR/compute-cost.sh"
 
 # ── JSONL path resolution ──────────────────────────────────────────────────────
-# Prefer CLAUDE_SESSION_JSONL (set by harness); fall back to computed path.
-JSONL_PATH="${CLAUDE_SESSION_JSONL:-}"
+# Claude Code Stop hooks receive input as JSON on stdin. The canonical field is
+# .transcript_path (per code.claude.com/docs/en/hooks.md#common-input-fields).
+# Env vars are fallbacks for SDK / manual invocation only.
+HOOK_INPUT=$(cat 2>/dev/null || true)
+JSONL_PATH=$(printf '%s' "$HOOK_INPUT" | jq -r '.transcript_path // empty' 2>/dev/null || true)
+
+if [[ -z "$JSONL_PATH" ]]; then
+  JSONL_PATH="${CLAUDE_SESSION_JSONL:-}"
+fi
+
 if [[ -z "$JSONL_PATH" ]]; then
   SESSION_ID="${CLAUDE_CODE_SESSION_ID:-}"
   if [[ -z "$SESSION_ID" ]]; then
@@ -40,10 +48,10 @@ TRIGGER_JSON=$(jq -sc '
         elif type == "array"  then (.[0].text? // "")
         else ""
         end) as $text |
-      select($text | test("<command-name>/(?:claudboard:claudboard-)?(?:analyse|generate|refresh|techdebt)</command-name>")) |
+      select($text | test("<command-name>/(?:claudboard:claudboard-)?(?:analyse|generate|refresh|techdebt|workflow)</command-name>")) |
       { timestamp: $ts,
         cmd: ($text
-          | capture("<command-name>/(?:claudboard:claudboard-)?(?<c>analyse|generate|refresh|techdebt)</command-name>")
+          | capture("<command-name>/(?:claudboard:claudboard-)?(?<c>analyse|generate|refresh|techdebt|workflow)</command-name>")
           | .c) }
     )
   | last? // null

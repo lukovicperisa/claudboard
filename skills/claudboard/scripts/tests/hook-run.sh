@@ -88,6 +88,43 @@ else
   fail=$((fail + 1))
 fi
 
+# ── stdin-mode assertions (bug 3 regression prevention) ───────────────────────
+# Claude Code's hook runner pipes JSON to stdin; env vars CLAUDE_SESSION_JSONL
+# and CLAUDE_CODE_SESSION_ID are NOT set. Explicitly unset them and pipe the
+# hook payload to stdin — this is the only test mode that exercises the
+# production input channel.
+
+# single-task-opus via stdin
+STDIN_PAYLOAD=$(printf '{"transcript_path":"%s","hook_event_name":"Stop"}' "$(realpath "$F/single-task-opus.jsonl")")
+out=$(HOME=$(mktemp -d) env -u CLAUDE_SESSION_JSONL -u CLAUDE_CODE_SESSION_ID bash "$HOOK" <<< "$STDIN_PAYLOAD" | msg)
+check "stdin-mode: /analyse" \
+  'Cost for /analyse: $0.06 (Opus 4.7 (Vertex), 2 calls, 2K out)' \
+  "$out"
+
+# namespaced-trigger.jsonl via stdin
+STDIN_PAYLOAD=$(printf '{"transcript_path":"%s","hook_event_name":"Stop"}' "$(realpath "$F/namespaced-trigger.jsonl")")
+out=$(HOME=$(mktemp -d) env -u CLAUDE_SESSION_JSONL -u CLAUDE_CODE_SESSION_ID bash "$HOOK" <<< "$STDIN_PAYLOAD" | msg)
+if [[ -n "$out" ]] && echo "$out" | grep -q '/analyse'; then
+  echo "PASS: stdin-mode: namespaced /claudboard:claudboard-analyse"
+  pass=$((pass + 1))
+else
+  echo "FAIL: stdin-mode: namespaced /claudboard:claudboard-analyse"
+  echo "  actual: $out"
+  fail=$((fail + 1))
+fi
+
+# namespaced-workflow.jsonl via stdin
+STDIN_PAYLOAD=$(printf '{"transcript_path":"%s","hook_event_name":"Stop"}' "$(realpath "$F/namespaced-workflow.jsonl")")
+out=$(HOME=$(mktemp -d) env -u CLAUDE_SESSION_JSONL -u CLAUDE_CODE_SESSION_ID bash "$HOOK" <<< "$STDIN_PAYLOAD" | msg)
+if [[ -n "$out" ]] && echo "$out" | grep -q '/workflow'; then
+  echo "PASS: stdin-mode: namespaced /claudboard:claudboard-workflow"
+  pass=$((pass + 1))
+else
+  echo "FAIL: stdin-mode: namespaced /claudboard:claudboard-workflow"
+  echo "  actual: $out"
+  fail=$((fail + 1))
+fi
+
 # ── summary ───────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $pass passed, $fail failed"
