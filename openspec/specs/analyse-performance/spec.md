@@ -1,125 +1,85 @@
 ## MODIFIED Requirements
 
-### Requirement: Default `/analyse` SHALL produce only the catalog and a thin human-readable summary
+### Requirement: Workspace mode SHALL share the unified pipeline with monorepo and single-project modes
 
-Default `/analyse` (invoked without flags) SHALL produce exactly two artifacts:
+Workspace mode (detected by per-repo `.git/` directories in subdirs of a non-git parent) SHALL execute the same `/analyse` pipeline as monorepo mode after the detection step. The detection step SHALL set `umbrella_root` once; all subsequent phases SHALL use that path to write outputs.
 
-1. `<project>/.claudboard/catalog.json` — the primary structural artifact (see `convention-catalog` capability for full schema)
-2. `<project>/.claude/reports/claudboard-analysis.md` — a thin human-readable summary suitable for the user's pre-generate review
+Default `/analyse` in workspace mode SHALL produce the same artifacts at the umbrella root as default `/analyse` in monorepo mode:
 
-Default `/analyse` SHALL NOT produce per-service audit reports under any path. Per-service audit production is the exclusive responsibility of `/analyse --audit` (see `per-service-analysis` spec).
+1. `<umbrella_root>/.claudboard/catalog.json` — convention catalog (with `mode: "workspace"`)
+2. `<umbrella_root>/.claude/reports/claudboard-analysis.md` — thin human-readable summary
+3. `<umbrella_root>/.claude/memories/ecosystem.md` — single umbrella-wide topology file
 
-The human-readable summary's size is bounded: typical output 80-150 lines for single-project, 150-250 lines for monorepo. The summary cross-references the catalog and, in monorepo mode, lists the detected services and stacks but does NOT include per-service Watch findings, quality scores, or cross-service Kafka graphs (those are audit-mode outputs).
+Default workspace `/analyse` SHALL NOT fan out per-repo sub-agents. The orchestrator picks one reference repo per detected stack (e.g. one Java service, one React MFE) and performs the deep pass inline, producing catalog content representative of the whole workspace.
 
-#### Scenario: Default `/analyse` writes catalog and thin summary
-- **WHEN** `/analyse` (default) completes against any project
-- **THEN** the produced artifacts are exactly `.claudboard/catalog.json` and `.claude/reports/claudboard-analysis.md` (plus the existing `.claude/memories/ecosystem.md` in workspace mode, unchanged)
+`/analyse --audit` in workspace mode SHALL fan out per-service Sonnet sub-agents — one per service repo (libraries excluded) — producing per-repo audit reports at `<umbrella_root>/.claudboard/audits/<repo>.md`. The audit output location is identical to monorepo's audit output location.
 
-#### Scenario: Default mode produces no per-service files
-- **WHEN** `/analyse` (default) runs against a 19-service monorepo
-- **THEN** no files are written under `.claudboard/audits/` and no `claudboard-analysis-<svc>.md` files are written anywhere
+The prior "workspace-mode behaviour is preserved pending follow-up adaptation" requirement is hereby REPLACED.
 
-#### Scenario: Summary remains thin
-- **WHEN** the human-readable summary is generated for a 19-service monorepo
-- **THEN** the file is ≤ 250 lines; per-service Watch findings, per-service quality dimension breakdowns, and cross-service edge graphs are absent or replaced with "See `/analyse --audit` for per-service detail"
+#### Scenario: Default workspace `/analyse` on a 14-repo workspace
+- **WHEN** `/analyse` (default) runs against MEAS workspace (14 service repos)
+- **THEN** the orchestrator picks ~5 reference repos (one per detected stack) and performs a deep pass on each; the catalog is written at `<workspace>/.claudboard/catalog.json` with `mode: "workspace"`; the thin summary is written at `<workspace>/.claude/reports/claudboard-analysis.md`; the umbrella ecosystem.md is written at `<workspace>/.claude/memories/ecosystem.md`; no per-repo sub-agents are spawned; no per-repo report files are written
 
----
+#### Scenario: `/analyse --audit` on the same workspace
+- **WHEN** `/analyse --audit` runs against MEAS workspace
+- **THEN** 14 Sonnet-tier sub-agents are spawned (one per service repo, excluding libraries); each writes its per-service audit to `<workspace>/.claudboard/audits/<repo>.md`; the catalog has `from_audit: true`; the thin summary cross-references the audit files
 
-### Requirement: `/analyse` SHALL accept and route the `--audit` flag
-
-`/analyse` SHALL accept an `--audit` flag in the user's invocation (e.g. `/analyse --audit`, `/analyse <path> --audit`).
-
-When `--audit` is passed, `/analyse` SHALL additionally execute the per-service deep analysis (Phases 1c through 1h per service via Sonnet sub-agents) and write per-service audit reports to `.claudboard/audits/<svc>.md` as defined in the `per-service-analysis` spec.
-
-When `--audit` is NOT passed, the default behaviour (catalog + thin summary, no per-service files) applies.
-
-`--audit` is also a no-op-modifier in single-project mode: a single-project repo has no "per-service" axis. In that mode `--audit` MAY produce a slightly more detailed summary (e.g. richer Watch findings) but no per-service files. Detailed single-project audit content is not specified here; the v1 default is "audit in single-project mode behaves the same as default."
-
-#### Scenario: `--audit` on a monorepo
-- **WHEN** `/analyse --audit` runs against a monorepo
-- **THEN** the catalog includes `from_audit: true`, per-service audit files are written to `.claudboard/audits/`, and the human-readable summary includes cross-references to those audit files
-
-#### Scenario: `--audit` on a single-project repo (v1)
-- **WHEN** `/analyse --audit` runs against a single-project repo
-- **THEN** behaviour is identical to default `/analyse` in v1 (catalog + thin summary; no per-service files); the catalog's `from_audit` field may still be set to `true` to signal user intent
-
-#### Scenario: Absence of `--audit` preserves default behaviour
-- **WHEN** `/analyse` runs without `--audit`
-- **THEN** no audit files are written and `from_audit: false` is set in the catalog
+#### Scenario: Workspace mode without bootstrapped meta-repo
+- **WHEN** `/analyse` runs in workspace mode AND `<workspace>/.claude` is not a symlink (no `/claudboard-workspace-init` has been run)
+- **THEN** the system creates `<workspace>/.claudboard/` and `<workspace>/.claude/reports/` and `<workspace>/.claude/memories/` inline AND writes outputs there AND prints one line at completion: "To share `.claude/` across your team under git, run `/claudboard-workspace-init` next."
 
 ---
 
-### Requirement: Asymmetric model tier SHALL be documented as the performance contract
+### Requirement: Default `/analyse` SHALL produce ecosystem.md and dependency graph in all multi-service modes
 
-The `/analyse` SKILL.md SHALL document the model tier assigned to each stage of the pipeline as a performance contract. Tiers are guidance to harness operators and SDK consumers; the skill itself does not enforce model choice (the harness does), but the SKILL.md states the assumed tier so that cost-model claims and performance characteristics are reproducible.
+Default `/analyse` SHALL produce a cross-service dependency graph and an umbrella-wide ecosystem.md in both monorepo mode and workspace mode. (Prior behaviour produced these only in workspace mode.)
 
-Tier assignments:
+Single-project mode SHALL either omit ecosystem.md entirely or produce a degenerate single-section file ("This project has no cross-service dependencies"). Implementation choice; either is acceptable as long as `/generate` and `/refresh` handle the degenerate case without erroring.
 
-| Stage | Tier | Rationale |
-|---|---|---|
-| `discover.sh` and other bash steps | n/a | Deterministic; no model |
-| Sub-agent per-service extraction (during `--audit` fan-out only) | Sonnet | Template-fill on file contents; well within Sonnet's competence |
-| Orchestrator catalog synthesis (cross-stack pattern dedup, outlier detection) | Opus | Genuine cross-document synthesis; Opus delivers measurably better outlier detection |
-| Orchestrator outlier sweep ("which services deviate from canonical conventions") | Opus | Pattern-recognition work; Opus is materially better |
-| Generation orchestrator (in `/generate`, downstream consumer) | Sonnet | Pure template-fill on structured catalog; see `monorepo-generation` spec |
+The graph is constructed in Phase 1 (orchestrator-side, from the wide-scan grep output that the existing pipeline already produces). It is cheap (no model fan-out) and feeds the ecosystem.md render directly.
 
-Sub-agent `Agent` invocations during `--audit` fan-out SHALL specify `model: "claude-sonnet-4-6"` (or current Sonnet ID) explicitly in the `Agent` tool call. This is a behavioural requirement on the skill, not just documentation.
+#### Scenario: Monorepo default mode produces ecosystem.md
+- **WHEN** `/analyse` (default) runs against a monorepo with 19 services
+- **THEN** the orchestrator builds a cross-service dependency graph from wide-scan output AND writes a single `<repo-root>/.claude/memories/ecosystem.md` containing one section per service (role / depends-on / used-by / shared-contracts / coupling-warnings)
 
-Haiku tier is intentionally NOT used in v1. The aggressive-tier option (Haiku for extraction) is a future capability that may be revisited after the conservative tier ships and calibration data accumulates. Calling it out explicitly to avoid silent "let me try Haiku here" drift.
+#### Scenario: Workspace default mode produces ecosystem.md (single file, umbrella root)
+- **WHEN** `/analyse` (default) runs against MEAS workspace
+- **THEN** a single `<workspace>/.claude/memories/ecosystem.md` is written at the umbrella root; per-repo `<repo>/.claude/memories/ecosystem.md` files are NOT written
 
-#### Scenario: Sub-agent dispatch specifies Sonnet
-- **WHEN** the SKILL.md describes a sub-agent spawn for `--audit` per-service analysis
-- **THEN** the spawn directive explicitly names the Sonnet tier (e.g. `Agent({model: "claude-sonnet-4-6", ...})`)
-
-#### Scenario: SKILL.md documents tier table
-- **WHEN** the analyse SKILL.md is loaded
-- **THEN** it contains a "Model Tiers" section near the top stating the tier per stage and the rationale
-
-#### Scenario: Haiku is not invoked
-- **WHEN** `/analyse` runs in any mode
-- **THEN** no stage spawns Haiku-tier sub-agents (explicitly excluded in v1)
+#### Scenario: Single-project mode handles the degenerate case
+- **WHEN** `/analyse` (default) runs against a single-project repo
+- **THEN** either no ecosystem.md is written, OR a short degenerate ecosystem.md is written stating no cross-service dependencies exist; either choice is acceptable
 
 ---
 
-### Requirement: Cost-model claims SHALL be stated and validated against measured baselines
+### Requirement: Cost-model claims SHALL extend to workspace mode
 
-The `/analyse` SKILL.md and the associated proposal/design SHALL state explicit cost claims for the supported invocation modes, grounded in a named baseline. Past performance claims ("$1-2 single-project baseline") that did not name the model tier and the codebase shape silently misled downstream readers.
-
-Stated claims for v1 (validated by tasks 6.1-6.5 against craftsphere.cloud and a single-project repo baseline):
+The `/analyse` SKILL.md "Cost expectations" section SHALL state cost caps for workspace mode. The claimed caps are:
 
 | Mode | Baseline | Cost cap |
 |---|---|---|
-| `/analyse` default | craftsphere.cloud (19 services, monorepo, Opus-orchestrator + Sonnet-sub-agents) | ≤ $150 |
-| `/analyse --audit` | craftsphere.cloud (same) | ≤ $250 |
-| `/analyse` default | single-project repo (e.g. GardenMind, ~500 files, asymmetric tier) | ≤ $15 |
-| `/generate` consuming catalog | craftsphere.cloud catalog | ≤ $25 |
+| `/analyse` default — workspace | MEAS workspace (14 service repos, mixed stack) | ≤ $80 |
+| `/analyse --audit` — workspace | MEAS workspace (same) | ≤ $250 |
+| `/generate` — workspace | MEAS umbrella catalog | ≤ $25 |
+| `/analyse` default — monorepo | craftsphere.cloud (19 services), unchanged baseline | ≤ $50 (regression cap; baseline ~$27) |
+| `/analyse --audit` — monorepo | craftsphere.cloud (same), unchanged baseline | ≤ $250 |
+| `/generate` — monorepo | craftsphere.cloud catalog, post per-service write removal | ≤ $15 (improvement expected from $11.31 baseline) |
+| `/analyse` default — single-project | small repo baseline | ≤ $15 (unchanged) |
 
-If measured cost exceeds the cap at validation time, the proposal SHALL be revised before merge; claims SHALL NOT be merged unless validated.
+If measured cost exceeds any cap at validation time, the proposal SHALL be revised before merge.
 
-The SKILL.md SHALL link to the change's design.md for full forensic context (the $417 measured baseline, the cost-loss breakdown, the rationale for the catalog-as-primary architecture).
-
-#### Scenario: Cost claims are stated in SKILL.md
+#### Scenario: SKILL.md documents workspace caps alongside monorepo caps
 - **WHEN** the analyse SKILL.md is loaded
-- **THEN** it contains a "Cost expectations" section naming the per-mode caps and the baseline they were measured against
-
-#### Scenario: Merge gate on cost validation
-- **WHEN** this change is merged
-- **THEN** the measured costs from tasks 6.1-6.5 are appended to design.md as a "Validation" section, confirming all four caps were met
+- **THEN** the "Cost expectations" section names the per-mode caps including workspace mode
 
 ---
 
-### Requirement: Workspace-mode behaviour is preserved pending follow-up adaptation
+### Requirement: Asymmetric model tiering applies uniformly across modes
 
-Workspace mode (multi-repo, each repo has its own `.git/`, reports historically written to `<workspace>/.claude/reports/`) is NOT restructured in this change. The current workspace-mode parallelisation protocol, per-repo report writing, and ecosystem.md generation remain unchanged.
+The asymmetric model tier (orchestrator on Opus for synthesis, sub-agents on Sonnet for per-service extraction during `--audit`, `/generate` on Sonnet for template-fill) SHALL apply to all three modes — single-project, monorepo, workspace.
 
-The catalog-as-primary architecture extends naturally to workspace mode (one catalog per repo, plus an optional workspace-level rollup), but the adaptation has open design questions (where does the rollup live? does the per-repo report location also move to `.claudboard/`? what tier do per-repo orchestrators use?) that warrant their own design pass.
+Workspace-mode sub-agent dispatch during `--audit` SHALL specify Sonnet tier explicitly in the `Agent` tool call (`model: "claude-sonnet-4-6"` or current Sonnet ID), the same as monorepo-mode `--audit` dispatch.
 
-A follow-up change will define the workspace-mode catalog adaptation. Until that lands, workspace-mode users continue to see the current behaviour: per-repo reports under `<workspace>/.claude/reports/`, no catalog produced.
-
-#### Scenario: Workspace mode unchanged
-- **WHEN** `/analyse` runs against a workspace (detected by per-repo `.git/` in build-root directories)
-- **THEN** workspace mode executes as previously defined (per-repo sub-agents, reports under `<workspace>/.claude/reports/`, ecosystem.md per repo); no catalog is produced in v1
-
-#### Scenario: `/generate` against a workspace
-- **WHEN** `/generate` runs against a workspace project
-- **THEN** the existing workspace-generation behaviour applies (reads per-repo reports); the catalog-first path does not yet apply to workspace mode in v1
+#### Scenario: Workspace `--audit` sub-agents on Sonnet
+- **WHEN** `/analyse --audit` runs in workspace mode and spawns 14 sub-agents
+- **THEN** each `Agent` invocation explicitly requests Sonnet tier

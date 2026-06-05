@@ -1,91 +1,76 @@
 ## MODIFIED Requirements
 
-### Requirement: `/generate` SHALL read `.claudboard/catalog.json` as its primary input source
+### Requirement: `/generate` SHALL apply the unified umbrella-root rule across all modes
 
-`/generate` SHALL look for the convention catalog at `<project>/.claudboard/catalog.json` first. If present, it SHALL read the catalog and proceed with generation using catalog fields as the sole structural input. It SHALL NOT walk `.claude/reports/*.md` for generative input when the catalog is present.
+`/generate` SHALL produce CLAUDE.md, rules, skills, and memories at the umbrella root in single-project, monorepo, and workspace modes. The unified write rule from the `umbrella-root-output` capability applies: no writes under any per-service `.claude/` directory.
 
-The catalog provides everything `/generate` requires: project-wide conventions (`catalog.conventions`), per-stack adaptive depth (`catalog.adaptive_depth`), proposed artifacts (`catalog.proposed_artifacts`), per-pattern exemplar paths (`catalog.patterns[<id>].exemplar_path`), per-stack scope (`catalog.stacks[].applicable_paths`).
+Workspace mode `/generate` SHALL read the catalog at `<workspace>/.claudboard/catalog.json` (via meta-repo symlink when bootstrapped) and write all artifacts to `<workspace>/.claude/` and per-service `<workspace>/<repo>/CLAUDE.md`. It SHALL NOT write per-repo `.claude/` content.
 
-The previously-documented "detect monorepo report structure" requirement (which scanned `.claude/reports/` for `claudboard-analysis-*.md` files) is superseded by the catalog-first behaviour. Per-service audit reports at `.claudboard/audits/*.md` are NOT consumed by `/generate`.
+Monorepo mode `/generate` SHALL read the catalog at `<repo-root>/.claudboard/catalog.json` and write all artifacts to `<repo-root>/.claude/` and per-service `<repo-root>/<service>/CLAUDE.md`. It SHALL NOT write per-service `.claude/` content (a change from prior monorepo behaviour, which may have written per-service rules or skills in some cases).
 
-#### Scenario: `/generate` consumes catalog
-- **WHEN** `/generate` runs against a project with `.claudboard/catalog.json` present
-- **THEN** `/generate` reads only the catalog plus the standard reference templates; it does not Read() any audit report files
+The prior `monorepo-generation` behaviour that produced per-service `.claude/` content is REPLACED.
 
-#### Scenario: Monorepo mode flag derived from catalog
-- **WHEN** the catalog has `mode: "monorepo"`
-- **THEN** `/generate` enters monorepo-generation behaviour (services table in CLAUDE.md, per-stack rule scoping, etc.) based on `catalog.stacks` and `catalog.proposed_artifacts`, not on the presence of per-service report files
+#### Scenario: Monorepo generation writes only at umbrella root
+- **WHEN** `/generate` runs against craftsphere.cloud (19-service monorepo)
+- **THEN** all skills, rules, and memories are written under `<repo-root>/.claude/`; per-service CLAUDE.md files are written for each detected service; no other per-service files are written
 
-#### Scenario: Single-project mode flag derived from catalog
-- **WHEN** the catalog has `mode: "single-project"`
-- **THEN** `/generate` follows the single-project generation path; per-service / per-stack scoping does not apply
+#### Scenario: Workspace generation writes only at umbrella root
+- **WHEN** `/generate` runs against MEAS workspace
+- **THEN** all skills, rules, and memories are written under `<workspace>/.claude/`; per-service CLAUDE.md files are written for each detected service repo; no `<repo>/.claude/skills/`, `<repo>/.claude/rules/`, or `<repo>/.claude/memories/` writes occur
 
----
-
-### Requirement: `/generate` SHALL fall back to legacy reports with one-time migration when the catalog is absent
-
-When `.claudboard/catalog.json` is absent and `.claude/reports/claudboard-analysis.md` is present (legacy state from prior claudboard versions), `/generate` SHALL:
-
-1. Parse the legacy report(s) on a best-effort basis.
-2. Extract recoverable catalog fields: proposed artifacts, project-wide conventions, per-pattern exemplars (from the report's "Best example" references), stacks (from the report's services/topology table).
-3. Synthesise a catalog at `.claudboard/catalog.json` with `from_audit: <true if per-service reports also present, else false>`.
-4. Log one line informing the user the migration ran.
-5. Proceed with normal catalog-driven generation.
-
-Subsequent `/generate` invocations see the catalog and skip the migration entirely.
-
-The migration SHALL NOT delete, move, or overwrite any legacy report files. Old reports remain at their old paths until the user manually cleans them up or runs `/analyse --audit` to refresh under the new path.
-
-If parsing legacy reports fails (corrupted file, schema from a much older claudboard version that lacks the expected sections), `/generate` SHALL exit with a clear message naming the offending file and instructing the user to run `/analyse` for a fresh catalog.
-
-#### Scenario: First post-change `/generate` migrates legacy state
-- **WHEN** `/generate` runs against a project with `.claude/reports/claudboard-analysis.md` and `.claude/reports/claudboard-analysis-foo-service.md` but no `.claudboard/catalog.json`
-- **THEN** `/generate` writes `.claudboard/catalog.json` (with `from_audit: true` since per-service reports are present), logs the migration, proceeds with generation, and leaves the legacy report files in place
-
-#### Scenario: Project with global report only (no per-service reports)
-- **WHEN** `/generate` runs against a single-project repo with only `.claude/reports/claudboard-analysis.md` and no `.claudboard/catalog.json`
-- **THEN** migration produces a catalog with `from_audit: false` and `mode: "single-project"`, and generation proceeds
-
-#### Scenario: Neither catalog nor legacy reports
-- **WHEN** `/generate` runs against a project with neither `.claudboard/catalog.json` nor any `.claude/reports/claudboard-analysis*.md`
-- **THEN** `/generate` exits with the existing "no analysis report found, run `/analyse` first" message (text updated to reference the catalog: "No catalog or legacy reports found. Run `/analyse` first to produce `.claudboard/catalog.json`.")
-
-#### Scenario: Migration parsing failure
-- **WHEN** `/generate` attempts to migrate a legacy report that lacks the expected "Proposed Artifacts" section
-- **THEN** `/generate` exits with an error naming the offending file path and instructing the user to run `/analyse`
+#### Scenario: Per-service CLAUDE.md count matches service count
+- **WHEN** `/generate` runs against a multi-service project (monorepo or workspace) with N detected services
+- **THEN** N per-service CLAUDE.md files are written (one per service, none for libraries)
 
 ---
 
-### Requirement: `/generate` SHALL run on the Sonnet model tier
+### Requirement: `/generate` skill output SHALL use Pattern A (dispatcher + references) for service-specific procedural content
 
-`/generate` orchestrator SHALL run on the Sonnet model tier. The rationale: `/generate`'s work is template-fill on a structured catalog input. There is no cross-document synthesis, no outlier detection, no creative pattern discovery — those happen in `/analyse`'s catalog production. Sonnet is competent for template-fill; Opus is overkill.
+When the catalog's `proposed_artifacts` includes a skill entry marked as having per-service variations (e.g. via a `per_service: true` flag or by the entry naming multiple service-specific exemplars), `/generate` SHALL produce that skill as a Pattern A dispatcher:
 
-This tier choice is documented in `/generate`'s SKILL.md and is intended as guidance to harness operators / SDK consumers who configure the orchestrator model.
+- One SKILL.md at `<umbrella_root>/.claude/skills/<concern>/SKILL.md` that enumerates the exact valid service names (closed-set) and instructs deterministic exact-match dispatch
+- One reference file at `<umbrella_root>/.claude/skills/<concern>/references/<service>.md` per service (filename exactly matches the service directory name)
 
-The one place this requirement may be revisited is the SKILL.md authoring step (Phase 3c) — generated skills' SKILL.md files include architecture diagrams, prose explanations of canonical patterns, and code examples extracted from the codebase. This is the most "creative" of `/generate`'s outputs. If empirical diffs (Sonnet vs Opus generation, both reading the same catalog) show meaningful quality degradation on SKILL.md authoring specifically, the tier decision may be split: Sonnet for CLAUDE.md and rules, Opus for SKILL.md authoring. This is a follow-up to evaluate, not part of v1.
+The SKILL.md SHALL NOT use fuzzy or model-interpretive matching for service-name dispatch; the valid set is fixed at generation time.
 
-#### Scenario: `/generate` documents Sonnet tier
-- **WHEN** the `/generate` SKILL.md is loaded
-- **THEN** the SKILL.md includes an explicit "Model tier: Sonnet" guideline near the top, with rationale linking back to the catalog-as-structured-input architectural decision
+Pattern B (one skill per service at the umbrella root) SHALL NOT be produced by `/generate` in v1. Pattern B is documented as a future promotion path for services with substantial procedural content; it is not part of v1 generation logic.
 
-#### Scenario: Quality acceptance criterion applies to merge
-- **WHEN** this change is merged
-- **THEN** `/generate` (Sonnet, catalog-driven) on craftsphere.cloud has been compared against `/generate` (Opus, full-reports-driven) and the diff has been confirmed substantively equivalent (see tasks 6.4)
+#### Scenario: Per-service skill produced as Pattern A dispatcher
+- **WHEN** the catalog indicates that service-deploy is per-service for 5 services
+- **THEN** `/generate` writes one `<umbrella_root>/.claude/skills/service-deploy/SKILL.md` enumerating the 5 service names AND 5 reference files at `<umbrella_root>/.claude/skills/service-deploy/references/<svc>.md`
+
+#### Scenario: SKILL.md enumerates exact service names
+- **WHEN** the dispatcher skill is written for services [meas.cloud.controller, meas.cloud.subscription, meas.cloud.profile-mapper]
+- **THEN** the SKILL.md body contains an explicit listing of those exact names AND instructs the agent to load `references/<name>.md` only for an exact match
+
+#### Scenario: Pattern B not produced in v1
+- **WHEN** `/generate` processes a per-service skill entry
+- **THEN** the output is a single dispatcher skill with references (Pattern A); no `<umbrella_root>/.claude/skills/<svc>-info/` per-service directories are produced
 
 ---
 
-### Requirement: Generated rule scoping SHALL use catalog `stacks` and `applicable_paths`
+### Requirement: `/generate` SHALL write per-service CLAUDE.md as the only per-service artifact
 
-The existing per-service rule scoping (e.g. `rules/<service-name>-conventions.md` with `paths: ["<service-dir>/**"]`) is preserved, but its inputs change source. The rule's `paths:` glob SHALL be derived from `catalog.stacks[<stack-id>].applicable_paths` (the union of all services in that stack), and the rule's content SHALL be derived from `catalog.conventions` and `catalog.adaptive_depth[<stack-id>]`.
+`/generate` SHALL write one CLAUDE.md per detected service at `<umbrella_root>/<service>/CLAUDE.md` in monorepo and workspace modes. Per-service CLAUDE.md is the only per-service file `/generate` writes outside the umbrella `.claude/`.
 
-In monorepos where multiple services share a stack (e.g. 11 Java services), this naturally produces a single shared rule file with `paths:` covering all 11 services — replacing the previous behaviour of producing N separate per-service rule files (which were near-duplicates anyway).
+Per-service CLAUDE.md SHALL be short (≤ 30 lines target, ≤ 50 lines hard limit) and SHALL reference the umbrella `.claude/memories/ecosystem.md` and umbrella `.claude/rules/` rather than duplicating their content. Per-service CLAUDE.md is loaded by Claude Code's dynamic down-walk when a sub-agent reads files in that subdirectory.
 
-When `/analyse --audit` discovers that a specific service diverges from its stack's canonical conventions, the audit report (`.claudboard/audits/<svc>.md`) captures the divergence. `/generate` does NOT produce a per-service override rule by default; if the user wants service-specific rule overrides, they edit the generated stack rule manually or wait for a future capability that consumes audit findings into generation.
+Per-service CLAUDE.md is NOT written for libraries or for the umbrella root itself.
 
-#### Scenario: Single rule for a shared-stack monorepo
-- **WHEN** `/generate` runs against a monorepo whose catalog has one `java-spring` stack with 11 services
-- **THEN** a single `rules/java-conventions.md` file is generated with `paths:` covering all 11 service directories; not 11 separate rule files
+#### Scenario: Per-service CLAUDE.md generated for each service
+- **WHEN** workspace mode detects 14 service repos and 0 libraries
+- **THEN** 14 per-service CLAUDE.md files are written
 
-#### Scenario: Per-stack rules for a multi-stack monorepo
-- **WHEN** the catalog has stacks `java-spring` (11 services), `react-ts` (5 services), `node-bff` (1 service), `kotlin-spring` (1 service)
-- **THEN** `/generate` produces four rule files (`java-conventions.md`, `react-conventions.md`, `bff-conventions.md`, `kotlin-conventions.md`), each scoped via `paths:` to its stack's services
+#### Scenario: Per-service CLAUDE.md is short
+- **WHEN** a per-service CLAUDE.md is written
+- **THEN** the file is ≤ 50 lines AND references umbrella `.claude/memories/ecosystem.md`
+
+---
+
+### Requirement: `/generate` summary SHALL explicitly confirm no per-service `.claude/` writes occurred
+
+On completion, `/generate` SHALL print a summary listing every written file, grouped by location (umbrella `.claude/`, per-service CLAUDE.md count, umbrella `.claudboard/`). The summary SHALL explicitly state when no per-service `.claude/` writes occurred (the expected v1 outcome).
+
+#### Scenario: Summary confirms umbrella-only writes
+- **WHEN** `/generate` completes
+- **THEN** the summary contains a line like "Per-service .claude/ writes: 0 (umbrella-only rule)"

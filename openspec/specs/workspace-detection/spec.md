@@ -1,44 +1,37 @@
-## ADDED Requirements
+## MODIFIED Requirements
 
-### Requirement: Detect workspace directory as analysis entry point
-The system SHALL detect workspace mode when the CWD contains no build file but contains subdirectories that each have both a build file AND an independent `.git/` directory.
+### Requirement: Post-detection workspace handling SHALL set umbrella_root and route into the unified pipeline
 
-The `.git/` presence in each subdir is the discriminator between workspace mode (multi-repo) and monorepo mode (shared `.git/` at root).
+After workspace detection identifies the workspace mode (per-repo `.git/` in subdirs of a non-git parent), the detection step SHALL:
 
-#### Scenario: Workspace with multiple independent repos
-- **WHEN** `/analyse` is run from `/workspace/` AND `/workspace/order-service/` has `build.gradle` + `.git/` AND `/workspace/user-service/` has `pom.xml` + `.git/`
-- **THEN** the system SHALL enter workspace mode and treat each subdir as an independent repo
+1. Compute `umbrella_root = <workspace dir>` (the directory `/analyse` was invoked from, the one containing the service repos)
+2. Classify each repo as service or library using the existing classification logic
+3. Resolve `.claude/` and `.claudboard/` placement: if `<workspace>/.claude` is a symlink to a bootstrapped meta-repo, writes go through that symlink; otherwise writes are inline at `<workspace>/`
+4. Route into the unified Phase 1 pipeline (same as monorepo) with `umbrella_root` and the classified repo list available to all subsequent phases
 
-#### Scenario: Monorepo root (no .git/ in subdirs)
-- **WHEN** `/analyse` is run from a directory with no build file AND subdirs have build files but NO `.git/`
-- **THEN** the system SHALL enter monorepo mode (existing behaviour, unchanged)
+The workspace topology presentation step SHALL list the detected repos and stacks AND state the `umbrella_root` AND state whether the workspace has been bootstrapped (`.claude/` symlink present) OR whether outputs will be written inline with an instruction to bootstrap. The user confirms before the unified pipeline proceeds.
 
-#### Scenario: Mixed subdirs (some with .git/, some without)
-- **WHEN** some subdirs have `.git/` and some do not
-- **THEN** subdirs with `.git/` SHALL be treated as independent repos; subdirs without SHALL be treated as shared libraries or infra directories and excluded from the service list
+The prior "present workspace topology before analysis" requirement is amended to include the bootstrap status in the presentation.
 
-#### Scenario: No build files found anywhere
-- **WHEN** CWD has no build file AND no subdirs have build files
-- **THEN** the system SHALL report: "No projects found at [path]. Check the path and try again." and stop.
+#### Scenario: Bootstrapped workspace
+- **WHEN** workspace mode is detected AND `<workspace>/.claude` is a symlink to `meas.workspace/.claude/`
+- **THEN** the topology presentation states "Workspace bootstrapped — writing to meta-repo via symlink" AND outputs are written through the symlink to the meta-repo
 
-### Requirement: Classify workspace repos as service or library
-Each detected repo in workspace mode SHALL be classified as service or library using the same signals as monorepo service classification (see stack-detectors.md → "Monorepo Detection & Service Classification").
+#### Scenario: Non-bootstrapped workspace
+- **WHEN** workspace mode is detected AND `<workspace>/.claude` is not a symlink (no meta-repo bootstrap has run)
+- **THEN** the topology presentation states "Workspace NOT bootstrapped — outputs will be written inline at `<workspace>/.claudboard/` and `<workspace>/.claude/reports/`" AND the system creates those directories inline AND at completion prints one line: "To share `.claude/` across your team under git, run `/claudboard-workspace-init` next."
 
-#### Scenario: Workspace repo classified as service
-- **WHEN** a repo subdir has a `Dockerfile` or main entry point (`@SpringBootApplication`, `public static void main`, etc.)
-- **THEN** it SHALL be classified as a service and included in the per-repo analysis loop
+#### Scenario: Umbrella root passes through to all phases
+- **WHEN** workspace detection completes
+- **THEN** all subsequent phases (Phase 1b discovery, Phase 1c graph, Phase 3 writes) receive `umbrella_root` and use it for file location decisions; no phase branches on `mode == "workspace"` for write-path logic
 
-#### Scenario: Workspace repo classified as library
-- **WHEN** a repo subdir has publish tasks and no main entry point and no Dockerfile
-- **THEN** it SHALL be classified as a library, excluded from per-service analysis, and noted in the ecosystem context of repos that depend on it
+---
 
-### Requirement: Present workspace topology before analysis
-After classification, the system SHALL present the detected topology and wait for user confirmation before running per-repo analysis.
+### Requirement: Workspace detection SHALL continue to distinguish service repos from library repos
 
-#### Scenario: Topology presented
-- **WHEN** workspace mode is detected and repos are classified
-- **THEN** the system SHALL display: "Found N repos: [list of services with stacks] + [list of libraries]. Running full analysis of each service."
+The existing classification logic (service vs library based on Dockerfile, main entry point, publish tasks) is preserved unchanged. Per-service CLAUDE.md and per-service catalog stack assignments apply only to service repos; library repos are excluded from per-service writes and from the umbrella ecosystem.md's per-service sections (they may still appear in services' Shared Contracts or Depends On entries).
 
-#### Scenario: User corrects misclassification
-- **WHEN** the user indicates a directory is misclassified
-- **THEN** the system SHALL adjust the classification before proceeding
+#### Scenario: Library repo excluded from per-service CLAUDE.md and ecosystem.md sections
+- **WHEN** workspace classifies `meas.cloud.common-dto` as a library (has publish task, no main entry, no Dockerfile)
+- **THEN** no `meas.cloud.common-dto/CLAUDE.md` is written by `/generate` AND the umbrella ecosystem.md does NOT have a per-service section for it
+- **AND** services that depend on it list it in their "Shared Contracts" or "Depends On" entries
