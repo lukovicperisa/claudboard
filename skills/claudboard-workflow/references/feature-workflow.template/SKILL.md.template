@@ -712,7 +712,18 @@ Emit a user-facing block with:
    orchestrator proposes to treat the tickets as one feature, with one-line
    justification per slice.
 
-**Blocking behavior by autonomy level:**
+**Blocking behavior by autonomy level — branch on `<gateMode>`:**
+
+**If `gate=mcp`:** The synthesis MUST be passed verbatim as the `context` field on the `clarify_request` question. Do NOT abbreviate or summarize — the user MUST see the full synthesis in the question card at confirmation time. Do NOT rely on the user reading the live stream; it is replaced by the InterviewPane once the gate opens.
+
+| `<autonomyLevel>` | Behavior |
+|-------------------|----------|
+| `autopilot` | Print synthesis as informational output and continue immediately to 1a (which will be skipped). Do NOT wait for user input. |
+| `balanced` | Call `mcp__bosch__clarify_request({ questions: [{ text: "Does this synthesis match your intent?", context: "<full synthesis markdown>" }] })`, then HALT (gate suspends until user responds). |
+| `guided` | Call `mcp__bosch__clarify_request({ questions: [{ text: "Does this synthesis and slicing match your intent?", context: "<full synthesis markdown including proposed slicing>" }] })`, then HALT. For multi-ticket input, the blocking confirmation MUST cover BOTH the prose summary AND the proposed slicing in a single exchange — slicing is a direction-level decision and is NOT auto-accepted in guided mode. |
+| `manual` | Call `mcp__bosch__clarify_request({ questions: [{ text: "Does this synthesis match your intent?", context: "<full synthesis markdown>" }] })`, then HALT (gate suspends until user responds). |
+
+**If `gate=interactive`:** The synthesis is visible in the conversation scrollback; print-then-HALT is sufficient.
 
 | `<autonomyLevel>` | Behavior |
 |-------------------|----------|
@@ -721,16 +732,14 @@ Emit a user-facing block with:
 | `guided` | Print synthesis, then HALT. For multi-ticket input, the blocking confirmation MUST cover BOTH the prose summary AND the proposed slicing in a single exchange — slicing is a direction-level decision and is NOT auto-accepted in guided mode. |
 | `manual` | Print synthesis, then HALT. Wait for user `confirm` or `correct: <feedback>`. |
 
-**HALT means: end the turn after printing.** See "Halt mechanics" above — plain
-text does not pause the CLI; only end-of-turn does. This applies to every blocking
-row in the table above and to all subsequent "wait for user" points.
+**HALT means (gate=mcp):** the `clarify_request` call itself suspends the agent — no end-of-turn needed. **HALT means (gate=interactive):** end the turn immediately after printing. Plain text does not pause the CLI; only end-of-turn does. This applies to every blocking row above and to all subsequent "wait for user" points.
 
 **Correction loop (balanced / guided / manual):**
 
-On `correct: <feedback>`:
-- If the feedback is concrete and unambiguous: re-synthesize incorporating the
-  feedback verbatim, re-print the new synthesis, and re-block for `confirm` or
-  `correct: <feedback>`. No upper limit on correction cycles.
+On `correct: <feedback>` or equivalent rejection:
+- If the feedback is concrete and unambiguous: re-synthesize incorporating the feedback verbatim, then:
+  - **gate=mcp:** call `mcp__bosch__clarify_request` again with the new synthesis as `context` on the next question, and re-block for confirmation. No upper limit on correction cycles.
+  - **gate=interactive:** re-print the new synthesis, then HALT, re-blocking for `confirm` or `correct: <feedback>`. No upper limit on correction cycles.
 - If the feedback is vague or has an ambiguous referent (e.g., "this is wrong"
   with no specifics, or feedback that could apply to multiple parts of the
   synthesis): ask ONE targeted clarifying question about the feedback BEFORE
