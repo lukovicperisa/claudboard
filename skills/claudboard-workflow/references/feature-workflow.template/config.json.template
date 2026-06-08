@@ -1,7 +1,7 @@
 {
 // Tracker backend: "jira" or "tr" (from config.tracker discriminator)
 // Repo backend: "ado" or "github" (from config.repo discriminator)
-// Credential handling: JIRA_EMAIL/JIRA_API_TOKEN env vars for jira-add-labels.sh (TRACKER_JIRA);
+// Credential handling: JIRA_EMAIL (or JIRA_USERNAME)/JIRA_API_TOKEN env vars for jira-add-labels.sh (TRACKER_JIRA);
 //   bosch-jira-mcp reads bearer token from ~/.config/bosch-jira-mcp/config.json (TRACKER_TR).
 // See tracker-config-prompts.md and repo-config-prompts.md for setup details.
 <!-- IF TRACKER_JIRA -->

@@ -22,7 +22,9 @@
 #   jira-add-labels.sh --ticket <KEY> --add <label> [--add <label> ...]
 #
 # Required env vars (set before calling this script):
-#   JIRA_EMAIL       — your Atlassian account email (e.g., dev@example.com)
+#   JIRA_EMAIL       — your Atlassian account email (e.g., dev@example.com); canonical name.
+#                      JIRA_USERNAME is accepted as an alias (atlassian-cli / jira-cli export
+#                      this name by convention). JIRA_EMAIL takes precedence when both are set.
 #   JIRA_API_TOKEN   — your Jira API token (NOT your Atlassian password)
 #                      Generate at: https://id.atlassian.com/manage-profile/security/api-tokens
 #
@@ -30,7 +32,8 @@
 #   .claude/skills/feature-workflow/config.json  (jira.urlBase)
 #
 # Examples:
-#   export JIRA_EMAIL=dev@example.com
+#   export JIRA_EMAIL=dev@example.com        # canonical form
+#   # or, if you already use atlassian-cli: export JIRA_USERNAME=dev@example.com
 #   export JIRA_API_TOKEN=your_api_token_here
 #   jira-add-labels.sh --ticket MEAS-1234 --add AI --add AI_CLI
 #   jira-add-labels.sh --ticket PLAT-100  --add AI --add AI_CLI --add BE
@@ -47,12 +50,15 @@ set -euo pipefail
 
 # ── Env-var preflight ────────────────────────────────────────────────────────
 
+# Accept JIRA_USERNAME as alias (atlassian-cli exports this name instead of JIRA_EMAIL)
+JIRA_EMAIL="${JIRA_EMAIL:-${JIRA_USERNAME:-}}"
+
 missing_vars=""
-[[ -z "${JIRA_EMAIL:-}" ]]      && missing_vars+=" JIRA_EMAIL"
+[[ -z "${JIRA_EMAIL:-}" ]]      && missing_vars+=" JIRA_EMAIL (or JIRA_USERNAME)"
 [[ -z "${JIRA_API_TOKEN:-}" ]]  && missing_vars+=" JIRA_API_TOKEN"
 if [[ -n "$missing_vars" ]]; then
   echo "Error: missing required env var(s):${missing_vars}" >&2
-  echo "Remediation: export JIRA_EMAIL=you@example.com JIRA_API_TOKEN=<token>" >&2
+  echo "Remediation: export JIRA_EMAIL=you@example.com  # or JIRA_USERNAME=you@example.com" >&2
   echo "  Get a Jira API token at: https://id.atlassian.com/manage-profile/security/api-tokens" >&2
   exit 1
 fi

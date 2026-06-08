@@ -27,7 +27,7 @@ independently.
 
 | Variable | Description |
 |---|---|
-| `JIRA_EMAIL` | Your Atlassian account email (e.g., `dev@example.com`) |
+| `JIRA_EMAIL` | Your Atlassian account email (e.g., `dev@example.com`). Also accepted under the alias `JIRA_USERNAME` for compatibility with atlassian-cli / jira-cli tooling that already exports `JIRA_USERNAME`. `JIRA_EMAIL` takes precedence when both are set. |
 | `JIRA_API_TOKEN` | Your Jira API token (NOT your Atlassian password) |
 
 **How to generate a Jira API token:**
@@ -37,6 +37,7 @@ click "Create API token", give it a label, and copy the token value.
 **How to export for an interactive shell:**
 ```bash
 export JIRA_EMAIL=dev@example.com
+# or, if you already use atlassian-cli conventions: export JIRA_USERNAME=dev@example.com
 export JIRA_API_TOKEN=your_token_here
 ```
 

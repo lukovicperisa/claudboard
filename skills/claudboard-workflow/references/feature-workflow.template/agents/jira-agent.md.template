@@ -166,7 +166,7 @@ command: bash .claude/skills/feature-workflow/scripts/jira-add-labels.sh \
   --add <label1> --add <label2> ...
 ```
 
-The script requires `JIRA_EMAIL` and `JIRA_API_TOKEN` to be set in the
+The script requires `JIRA_EMAIL` (or `JIRA_USERNAME`) and `JIRA_API_TOKEN` to be set in the
 environment. If the script exits non-zero, capture the stderr and return
 an error result block instead of a success result. Do NOT report success if the script fails.
 
@@ -303,7 +303,7 @@ command: bash .claude/skills/feature-workflow/scripts/jira-add-labels.sh \
 ```
 
 The script reads `jira.urlBase` from `.claude/skills/feature-workflow/config.json`
-at runtime and authenticates via `JIRA_EMAIL` and `JIRA_API_TOKEN` env vars.
+at runtime and authenticates via `JIRA_EMAIL` (or `JIRA_USERNAME`) and `JIRA_API_TOKEN` env vars.
 Do NOT call `mcp__atlassian__editJiraIssue` with a `labels` field under
 this action.
 
